@@ -1,0 +1,227 @@
+name: Publish Lorekeeper
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Wersja w formacie 0.1.0.0"
+        required: true
+        type: string
+      changelog:
+        description: "Krótki opis zmian"
+        required: false
+        default: "Prywatne wydanie testowe."
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lorekeeper-publish
+  cancel-in-progress: false
+
+env:
+  SOLUTION_PATH: Lorekeeper.sln
+  PROJECT_PATH: Lorekeeper/Lorekeeper.csproj
+  MANIFEST_PATH: Lorekeeper/Lorekeeper.json
+  INTERNAL_NAME: Lorekeeper
+  RELEASE_CHANGELOG: ${{ inputs.changelog }}
+
+jobs:
+  publish:
+    runs-on: windows-2022
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Sprawdź wersję i gałąź
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}".Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+              throw "Wersja musi mieć format 0.1.0.0"
+          }
+
+          $defaultBranch = "${{ github.event.repository.default_branch }}"
+          $currentBranch = "${{ github.ref_name }}"
+          if ($currentBranch -ne $defaultBranch) {
+              throw "Uruchom publikację z domyślnej gałęzi: $defaultBranch"
+          }
+
+          $tag = "v$version"
+          $repositoryUrl = "https://github.com/${{ github.repository }}"
+          $downloadUrl = "$repositoryUrl/releases/download/$tag/Lorekeeper.zip"
+
+          "PLUGIN_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "REPOSITORY_URL=$repositoryUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "DOWNLOAD_URL=$downloadUrl" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Sprawdź, czy wersja już istnieje
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          gh release view $env:RELEASE_TAG --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+              throw "Wydanie $env:RELEASE_TAG już istnieje. Użyj wyższego numeru wersji."
+          }
+
+          git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_TAG" *> $null
+          if ($LASTEXITCODE -eq 0) {
+              throw "Tag $env:RELEASE_TAG już istnieje. Użyj wyższego numeru wersji."
+          }
+
+          exit 0
+
+      - name: Przygotuj manifest wydania
+        shell: pwsh
+        run: |
+          $manifest = Get-Content $env:MANIFEST_PATH -Raw | ConvertFrom-Json
+          $manifest.Author = "heiyeshi"
+          $manifest.RepoUrl = $env:REPOSITORY_URL
+          $manifest.Changelog = $env:RELEASE_CHANGELOG
+          $manifest | ConvertTo-Json -Depth 20 | Set-Content $env:MANIFEST_PATH -Encoding utf8
+
+      - name: Zainstaluj .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pobierz pliki deweloperskie Dalamuda
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:APPDATA "XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/latest.zip" -OutFile "$env:RUNNER_TEMP\dalamud.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\dalamud.zip" -DestinationPath $destination -Force
+
+      - name: Przywróć zależności
+        shell: pwsh
+        run: dotnet restore $env:SOLUTION_PATH --locked-mode
+
+      - name: Zbuduj paczkę Release
+        shell: pwsh
+        run: |
+          dotnet build $env:SOLUTION_PATH --configuration Release --no-restore -p:Version=$env:PLUGIN_VERSION
+
+      - name: Znajdź i sprawdź paczkę
+        shell: pwsh
+        run: |
+          $releaseRoot = Join-Path (Split-Path $env:PROJECT_PATH) "bin\x64\Release"
+          $package = Get-ChildItem -Path $releaseRoot -Filter "latest.zip" -File -Recurse | Select-Object -First 1
+
+          if ($null -eq $package) {
+              throw "Nie znaleziono latest.zip w $releaseRoot"
+          }
+
+          $finalZip = Join-Path $env:RUNNER_TEMP "Lorekeeper.zip"
+          Copy-Item $package.FullName $finalZip -Force
+
+          $expanded = Join-Path $env:RUNNER_TEMP "package-check"
+          if (Test-Path $expanded) {
+              Remove-Item $expanded -Recurse -Force
+          }
+          Expand-Archive -Path $finalZip -DestinationPath $expanded -Force
+
+          $requiredFiles = @(
+              "Lorekeeper.dll",
+              "Lorekeeper.json",
+              "OpenAI.dll",
+              "overlay.html"
+          )
+
+          foreach ($file in $requiredFiles) {
+              $found = Get-ChildItem -Path $expanded -Filter $file -File -Recurse | Select-Object -First 1
+              if ($null -eq $found) {
+                  throw "Paczka nie zawiera wymaganego pliku: $file"
+              }
+          }
+
+          $manifestFile = Get-ChildItem -Path $expanded -Filter "$env:INTERNAL_NAME.json" -File -Recurse | Select-Object -First 1
+          if ($null -eq $manifestFile) {
+              throw "Nie znaleziono manifestu $env:INTERNAL_NAME.json w paczce."
+          }
+
+          $manifest = Get-Content $manifestFile.FullName -Raw | ConvertFrom-Json
+
+          if ($manifest.InternalName -ne $env:INTERNAL_NAME) {
+              throw "Nieprawidłowy InternalName w paczce: $($manifest.InternalName)"
+          }
+          if ($manifest.AssemblyVersion -ne $env:PLUGIN_VERSION) {
+              throw "Manifest ma wersję $($manifest.AssemblyVersion), oczekiwano $env:PLUGIN_VERSION"
+          }
+          if ([int]$manifest.DalamudApiLevel -ne 15) {
+              throw "Manifest ma DalamudApiLevel $($manifest.DalamudApiLevel), oczekiwano 15"
+          }
+          if ($manifest.RepoUrl -ne $env:REPOSITORY_URL) {
+              throw "Manifest ma nieprawidłowy RepoUrl: $($manifest.RepoUrl)"
+          }
+
+          "PACKAGE_ZIP=$finalZip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PACKAGED_MANIFEST=$($manifestFile.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Utwórz repo.json
+        shell: pwsh
+        run: |
+          $manifest = Get-Content $env:PACKAGED_MANIFEST -Raw | ConvertFrom-Json
+
+          $entry = [ordered]@{
+              Author = $manifest.Author
+              Name = $manifest.Name
+              Punchline = $manifest.Punchline
+              Description = $manifest.Description
+              InternalName = $manifest.InternalName
+              AssemblyVersion = $manifest.AssemblyVersion
+              RepoUrl = $env:REPOSITORY_URL
+              ApplicableVersion = $manifest.ApplicableVersion
+              DalamudApiLevel = [int]$manifest.DalamudApiLevel
+              Tags = $manifest.Tags
+              Changelog = $env:RELEASE_CHANGELOG
+              IsHide = $false
+              IsTestingExclusive = $false
+              DownloadLinkInstall = $env:DOWNLOAD_URL
+              DownloadLinkUpdate = $env:DOWNLOAD_URL
+              LastUpdate = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          }
+
+          $repoPath = Join-Path $env:RUNNER_TEMP "repo.json"
+          $entry | ConvertTo-Json -Depth 20 -AsArray | Set-Content $repoPath -Encoding utf8
+          "GENERATED_REPO_JSON=$repoPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Utwórz wydanie GitHub
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          $env:RELEASE_CHANGELOG
+
+          Wersja: $env:PLUGIN_VERSION
+          Dalamud API: 15
+          "@
+
+          gh release create $env:RELEASE_TAG "$env:PACKAGE_ZIP#Lorekeeper.zip" --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Lorekeeper $env:PLUGIN_VERSION" --notes $notes
+
+      - name: Zaktualizuj stały adres repo.json
+        shell: pwsh
+        run: |
+          git restore -- $env:MANIFEST_PATH
+          Copy-Item $env:GENERATED_REPO_JSON "repo.json" -Force
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repo.json
+
+          if (git diff --cached --quiet) {
+              Write-Host "repo.json nie wymaga zmian."
+              exit 0
+          }
+
+          git commit -m "Update Lorekeeper repository to $env:PLUGIN_VERSION"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
