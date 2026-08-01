@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.ManagedFontAtlas;
@@ -36,8 +37,18 @@ public sealed class MainWindow : Window, IDisposable
     {
         this.plugin = plugin;
 
-        dialogueFont = CreateFontHandle(DialogueFontSize);
-        npcNameFont = CreateFontHandle(NpcNameFontSize);
+        string pluginDirectory =
+            Plugin.PluginInterface.AssemblyLocation.Directory?.FullName
+            ?? Plugin.PluginInterface.ConfigDirectory.FullName;
+
+        string fontPath = Path.Combine(
+            pluginDirectory,
+            "Assets",
+            "Fonts",
+            "NotoSans-SemiBold.ttf");
+
+        dialogueFont = CreateFontHandle(fontPath, DialogueFontSize);
+        npcNameFont = CreateFontHandle(fontPath, NpcNameFontSize);
 
         Flags =
             ImGuiWindowFlags.NoDecoration |
@@ -95,14 +106,46 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.PopStyleVar(3);
     }
 
-    private static IFontHandle CreateFontHandle(float fontSize)
+    private static IFontHandle CreateFontHandle(
+        string fontPath,
+        float fontSize)
     {
         return Plugin.PluginInterface.UiBuilder.FontAtlas
             .NewDelegateFontHandle(
                 buildStep =>
                     buildStep.OnPreBuild(
                         toolkit =>
-                            toolkit.AddDalamudDefaultFont(fontSize)));
+                        {
+                            if (File.Exists(fontPath))
+                            {
+                                toolkit.AddFontFromFile(
+                                    fontPath,
+                                    new SafeFontConfig
+                                    {
+                                        SizePx = fontSize,
+                                        GlyphRanges =
+                                        [
+                                            0x0020,
+                                            0x00FF,
+                                            0x0100,
+                                            0x017F,
+                                            0x2000,
+                                            0x206F,
+                                            0
+                                        ]
+                                    });
+
+                                Plugin.Log.Information(
+                                    $"Załadowano font {fontSize}px: {fontPath}");
+
+                                return;
+                            }
+
+                            Plugin.Log.Warning(
+                                $"Nie znaleziono fontu: {fontPath}");
+
+                            toolkit.AddDalamudDefaultFont(fontSize);
+                        }));
     }
 
     private void ApplyWindowLayout()

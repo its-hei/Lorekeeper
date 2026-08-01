@@ -133,7 +133,8 @@ jobs:
               "Lorekeeper.dll",
               "Lorekeeper.json",
               "OpenAI.dll",
-              "overlay.html"
+              "overlay.html",
+              "NotoSans-SemiBold.ttf"
           )
 
           foreach ($file in $requiredFiles) {

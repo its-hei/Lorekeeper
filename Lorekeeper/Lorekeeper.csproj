@@ -9,6 +9,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <Content Include="Assets\Fonts\NotoSans-SemiBold.ttf">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+
         <Content Include="Assets\OBS\overlay.html">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
