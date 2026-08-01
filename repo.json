@@ -5,7 +5,7 @@
     "Punchline": "Polskie tłumaczenia dialogów FFXIV na żywo.",
     "Description": "Tłumaczy dialogi NPC z Final Fantasy XIV na język polski przez konto OpenAI użytkownika i wyświetla je w nakładce ImGui oraz OBS. Tekst dialogu i nazwa mówcy są wysyłane do OpenAI. Otwórz ustawienia komendą /lore.",
     "InternalName": "Lorekeeper",
-    "AssemblyVersion": "0.1.0.0",
+    "AssemblyVersion": "0.1.0.1",
     "RepoUrl": "https://github.com/its-hei/Lorekeeper",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 15,
@@ -16,11 +16,11 @@
       "story",
       "obs"
     ],
-    "Changelog": "Pierwsza wersja testowa.",
+    "Changelog": "Naprawiono wyświetlanie polskich znaków.",
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://github.com/its-hei/Lorekeeper/releases/download/v0.1.0.0/Lorekeeper.zip",
-    "DownloadLinkUpdate": "https://github.com/its-hei/Lorekeeper/releases/download/v0.1.0.0/Lorekeeper.zip",
-    "LastUpdate": 1785592711
+    "DownloadLinkInstall": "https://github.com/its-hei/Lorekeeper/releases/download/v0.1.0.1/Lorekeeper.zip",
+    "DownloadLinkUpdate": "https://github.com/its-hei/Lorekeeper/releases/download/v0.1.0.1/Lorekeeper.zip",
+    "LastUpdate": 1785595162
   }
 ]
