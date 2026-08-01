@@ -83,9 +83,9 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content $env:MANIFEST_PATH -Raw | ConvertFrom-Json
-          $manifest.Author = "heiyeshi"
-          $manifest.RepoUrl = $env:REPOSITORY_URL
-          $manifest.Changelog = $env:RELEASE_CHANGELOG
+          $manifest | Add-Member -NotePropertyName Author -NotePropertyValue "heiyeshi" -Force
+          $manifest | Add-Member -NotePropertyName RepoUrl -NotePropertyValue $env:REPOSITORY_URL -Force
+          $manifest | Add-Member -NotePropertyName Changelog -NotePropertyValue $env:RELEASE_CHANGELOG -Force
           $manifest | ConvertTo-Json -Depth 20 | Set-Content $env:MANIFEST_PATH -Encoding utf8
 
       - name: Zainstaluj .NET 10
