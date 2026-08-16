@@ -1,39 +1,40 @@
-name: Lorekeeper PR Build
+name: Lorekeeper Build
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
-    branches: [ master ]
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-
   build:
     runs-on: windows-2022
 
-    env:
-      Solution_Name: Lorekeeper
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v5
 
-    - name: Install .NET
-      uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: 10.0.x
+      - name: Install .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
 
-    - name: Download Dalamud
-      run: |
-        Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
-        Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev"
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
+          Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev"
 
-    - name: Build with dotnet
-      run: dotnet build --configuration Release
+      - name: Build Lorekeeper
+        run: dotnet build Lorekeeper.sln --configuration Release
 
-    - name: Store artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: Lorekeeper
-        path: .\Lorekeeper\bin\x64\Release\Lorekeeper\*
-        if-no-files-found: error
-        retention-days: 1
-
+      - name: Store build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lorekeeper
+          path: .\Lorekeeper\bin\x64\Release\Lorekeeper\*
+          if-no-files-found: error
+          retention-days: 7
