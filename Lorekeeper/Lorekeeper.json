@@ -1,15 +1,14 @@
 {
-  "Author": "heiyeshi",
+  "Author": "its-hei",
   "Name": "Lorekeeper",
-  "Punchline": "Polskie tłumaczenia dialogów FFXIV na żywo.",
-  "Description": "Tłumaczy dialogi NPC z Final Fantasy XIV na język polski przez konto OpenAI użytkownika i wyświetla je w nakładce ImGui oraz OBS. Tekst dialogu i nazwa mówcy są wysyłane do OpenAI. Otwórz ustawienia komendą /lore.",
-  "RepoUrl": "https://github.com/OWNER/Lorekeeper",
+  "Punchline": "Polish live dialogue translation for FFXIV.",
+  "Description": "Translates Final Fantasy XIV NPC dialogue into Polish and displays it in a dedicated overlay. Open the plugin with /lore.",
   "ApplicableVersion": "any",
   "Tags": [
     "translation",
-    "polish",
     "dialogue",
     "story",
-    "obs"
+    "lore",
+    "polish"
   ]
 }

@@ -34,39 +34,122 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService]
     internal static IPlayerState PlayerState { get; private set; } = null!;
 
+    [PluginService]
+    internal static IObjectTable ObjectTable { get; private set; } = null!;
+
+    [PluginService]
+    internal static ITextureProvider TextureProvider { get; private set; } = null!;
+
     private readonly WindowSystem windowSystem = new("Lorekeeper");
     private readonly ConfigWindow configWindow;
     private readonly MainWindow mainWindow;
     private readonly DialogueEngine dialogueEngine;
     private readonly PlayerTranslationContextProvider translationContextProvider;
+    private readonly NpcKnowledgeStore npcKnowledgeStore;
+    private readonly NpcSexResolver npcSexResolver;
+    private readonly TerminologyStore terminologyStore;
+    private readonly TerminologyProposalStore terminologyProposalStore;
+    private readonly ConversationMemory conversationMemory;
     private readonly ObsOverlayServer obsOverlayServer;
+    private readonly LibreTranslateRuntimeManager libreTranslateRuntimeManager;
+    private readonly LorekeeperCloudClient cloudClient;
 
     public Plugin()
     {
+        Log.Information("LOREKEEPER BUILD: KNOWLEDGE TEST 2");
+        Log.Information(
+            $"LOREKEEPER DLL: {typeof(Plugin).Assembly.Location}");
+
         Configuration =
             PluginInterface.GetPluginConfig() as Configuration
             ?? new Configuration();
 
         PluginInterface.UiBuilder.DisableCutsceneUiHide = true;
 
-        configWindow = new ConfigWindow(this);
+        translationContextProvider =
+            new PlayerTranslationContextProvider(PlayerState);
+
+        var lorekeeperLogger =
+            new DalamudLorekeeperLogger(Log);
+
+        string knowledgePath = Path.Combine(
+            PluginInterface.ConfigDirectory.FullName,
+            "knowledge.json");
+
+        npcKnowledgeStore = new NpcKnowledgeStore(
+            knowledgePath,
+            lorekeeperLogger);
+
+        npcSexResolver = new NpcSexResolver(
+            ObjectTable,
+            Log);
+
+        Log.Information($"KNOWLEDGE FILE: {knowledgePath}");
+
+        string terminologyPath = Path.Combine(
+            PluginInterface.ConfigDirectory.FullName,
+            "terminology.json");
+
+        terminologyStore = new TerminologyStore(
+            terminologyPath,
+            lorekeeperLogger);
+
+        Log.Information(
+            $"TERMINOLOGY FILE: {terminologyPath}");
+
+        string terminologyProposalsPath = Path.Combine(
+            PluginInterface.ConfigDirectory.FullName,
+            "terminology-proposals.json");
+
+        terminologyProposalStore =
+            new TerminologyProposalStore(
+                terminologyProposalsPath,
+                lorekeeperLogger);
+
+        Log.Information(
+            $"TERMINOLOGY PROPOSALS FILE: " +
+            $"{terminologyProposalsPath}");
+
+        libreTranslateRuntimeManager =
+            new LibreTranslateRuntimeManager(
+                PluginInterface.ConfigDirectory.FullName,
+                lorekeeperLogger);
+
+        EnsureCloudClientId();
+
+        cloudClient =
+            new LorekeeperCloudClient(
+                Configuration,
+                terminologyStore,
+                lorekeeperLogger);
+
+        configWindow = new ConfigWindow(
+            this,
+            terminologyProposalStore,
+            terminologyStore,
+            libreTranslateRuntimeManager);
+
         mainWindow = new MainWindow(this);
 
         windowSystem.AddWindow(configWindow);
         windowSystem.AddWindow(mainWindow);
 
-        translationContextProvider =
-            new PlayerTranslationContextProvider(PlayerState);
+        conversationMemory =
+            new ConversationMemory(20);
 
         dialogueEngine = new DialogueEngine(CreateTranslator());
 
         obsOverlayServer = new ObsOverlayServer(
             () => dialogueEngine.CurrentDialogue,
-            new DalamudLorekeeperLogger(Log));
+            lorekeeperLogger);
 
         RegisterCommand();
         RegisterUiCallbacks();
         RegisterTalkListeners();
+
+        // Jeżeli lokalny LibreTranslate był wcześniej zainstalowany,
+        // uruchamiamy go automatycznie po starcie pluginu.
+        _ = libreTranslateRuntimeManager.StartIfInstalledAsync();
 
         Log.Information(
             $"Plugin {PluginInterface.Manifest.Name} został uruchomiony.");
@@ -80,6 +163,8 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         obsOverlayServer.Dispose();
+        cloudClient.Dispose();
+        libreTranslateRuntimeManager.Dispose();
 
         UnregisterTalkListeners();
         UnregisterUiCallbacks();
@@ -92,11 +177,16 @@ public sealed class Plugin : IDalamudPlugin
 
     private ITranslator CreateTranslator()
     {
-        string cachePath = Path.Combine(
+        string openAiCachePath = Path.Combine(
             PluginInterface.ConfigDirectory.FullName,
             "translations.json");
 
-        Log.Information($"CACHE FILE: {cachePath}");
+        string libreCachePath = Path.Combine(
+            PluginInterface.ConfigDirectory.FullName,
+            "translations-libre.json");
+
+        Log.Information($"OPENAI CACHE FILE: {openAiCachePath}");
+        Log.Information($"LIBRE CACHE FILE: {libreCachePath}");
 
         var options = new OpenAiTranslatorOptions(
             Configuration.OpenAiApiKey,
@@ -105,10 +195,38 @@ public sealed class Plugin : IDalamudPlugin
         var translatorLogger =
             new DalamudLorekeeperLogger(Log);
 
-        return new Translator(
-            new TranslationCache(cachePath),
+        var openAiTranslator = new Translator(
+            new TranslationCache(openAiCachePath),
             options,
+            translatorLogger,
+            terminologyStore,
+            conversationMemory);
+
+        var libreTranslator = new LibreTranslateTranslator(
+            new TranslationCache(libreCachePath),
+            translatorLogger,
+            conversationMemory);
+
+        return new TranslationRouter(
+            Configuration,
+            openAiTranslator,
+            libreTranslator,
+            cloudClient,
             translatorLogger);
+    }
+
+    private void EnsureCloudClientId()
+    {
+        if (!string.IsNullOrWhiteSpace(
+                Configuration.CloudClientId))
+        {
+            return;
+        }
+
+        Configuration.CloudClientId =
+            Guid.NewGuid().ToString("N");
+
+        Configuration.Save();
     }
 
     private void RegisterCommand()
@@ -117,7 +235,7 @@ public sealed class Plugin : IDalamudPlugin
             CommandName,
             new CommandInfo(OnCommand)
             {
-                HelpMessage = "Otwiera nakładkę Lorekeeper."
+                HelpMessage = "Opens the Lorekeeper window."
             });
     }
 
@@ -166,7 +284,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string arguments)
     {
-        mainWindow.Toggle();
+        configWindow.Toggle();
     }
 
     private void OnTalkRefreshed(AddonEvent eventType, AddonArgs args)
@@ -181,8 +299,19 @@ public sealed class Plugin : IDalamudPlugin
 
         dialogueEngine.MarkOpen();
 
-        TranslationContext context =
+        Log.Information(
+            $"KNOWLEDGE CHECK: NPC = {npcName}");
+
+        TranslationContext playerContext =
             translationContextProvider.GetCurrent();
+
+        PlayerSex speakerSex =
+            ResolveAndRememberSpeakerSex(npcName);
+
+        TranslationContext context =
+            new(
+                playerContext.PlayerCharacterSex,
+                speakerSex);
 
         if (!dialogueEngine.TryProcessDialogue(
                 npcName,
@@ -200,9 +329,43 @@ public sealed class Plugin : IDalamudPlugin
         _ = ObserveTranslationAsync(npcName, completion);
     }
 
+    private PlayerSex ResolveAndRememberSpeakerSex(
+        string npcName)
+    {
+        if (npcSexResolver.TryResolve(
+                npcName,
+                out NpcResolvedIdentity identity))
+        {
+            npcKnowledgeStore.RememberSex(
+                identity.BaseId,
+                identity.Name,
+                identity.Sex,
+                KnowledgeSource.GameData,
+                1.0);
+
+            Log.Information(
+                $"KNOWLEDGE SAVED: " +
+                $"{identity.Name} " +
+                $"[BaseId={identity.BaseId}] = " +
+                $"{identity.Sex}");
+
+            return identity.Sex;
+        }
+
+        Log.Information(
+            $"KNOWLEDGE: Brak aktywnej tożsamości NPC " +
+            $"dla nazwy {npcName}. Nie użyto pamięci po nazwie.");
+
+        return PlayerSex.Unknown;
+    }
+
     private void OnTalkClosed(AddonEvent eventType, AddonArgs args)
     {
         dialogueEngine.MarkClosed();
+        conversationMemory.Clear();
+
+        Log.Information(
+            "CONVERSATION: Pamięć rozmowy została wyczyszczona.");
 
         Log.Debug(
             $"Okno {TalkAddonName} zostało zamknięte lub ukryte. " +

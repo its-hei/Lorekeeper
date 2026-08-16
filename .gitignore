@@ -1,7 +1,4 @@
 .vs/
-**/bin/
-**/obj/
-dist/
+obj/
+bin/
 *.user
-*.suo
-*.lnk
