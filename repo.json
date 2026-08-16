@@ -2,25 +2,25 @@
   {
     "Author": "heiyeshi",
     "Name": "Lorekeeper",
-    "Punchline": "Polskie tłumaczenia dialogów FFXIV na żywo.",
-    "Description": "Tłumaczy dialogi NPC z Final Fantasy XIV na język polski przez konto OpenAI użytkownika i wyświetla je w nakładce ImGui oraz OBS. Tekst dialogu i nazwa mówcy są wysyłane do OpenAI. Otwórz ustawienia komendą /lore.",
+    "Punchline": "Polish live dialogue translation for FFXIV.",
+    "Description": "Translates Final Fantasy XIV NPC dialogue into Polish and displays it in a dedicated overlay. Open the plugin with /lore.",
     "InternalName": "Lorekeeper",
-    "AssemblyVersion": "0.1.0.1",
+    "AssemblyVersion": "1.2.0.0",
     "RepoUrl": "https://github.com/its-hei/Lorekeeper",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 15,
     "Tags": [
       "translation",
-      "polish",
       "dialogue",
       "story",
-      "obs"
+      "lore",
+      "polish"
     ],
-    "Changelog": "Naprawiono wyświetlanie polskich znaków.",
+    "Changelog": "OpenAI + LibreTranslate, automatyczna instalacja LibreTranslate i Lorekeeper Cloud dla tłumaczeń OpenAI.",
     "IsHide": false,
     "IsTestingExclusive": false,
-    "DownloadLinkInstall": "https://github.com/its-hei/Lorekeeper/releases/download/v0.1.0.1/Lorekeeper.zip",
-    "DownloadLinkUpdate": "https://github.com/its-hei/Lorekeeper/releases/download/v0.1.0.1/Lorekeeper.zip",
-    "LastUpdate": 1785595162
+    "DownloadLinkInstall": "https://github.com/its-hei/Lorekeeper/releases/download/v1.2.0.0/Lorekeeper.zip",
+    "DownloadLinkUpdate": "https://github.com/its-hei/Lorekeeper/releases/download/v1.2.0.0/Lorekeeper.zip",
+    "LastUpdate": 1786896126
   }
 ]
