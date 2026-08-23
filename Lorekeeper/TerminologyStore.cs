@@ -117,6 +117,27 @@ public sealed class TerminologyStore
         }
     }
 
+    public bool Remove(string sourceTerm)
+    {
+        if (string.IsNullOrWhiteSpace(sourceTerm))
+        {
+            return false;
+        }
+
+        string key = Normalize(sourceTerm);
+
+        lock (sync)
+        {
+            if (!entries.Remove(key))
+            {
+                return false;
+            }
+
+            SaveLocked();
+            return true;
+        }
+    }
+
     private static bool ShouldReplace(
         TerminologyEntry existing,
         TerminologyEntry candidate)

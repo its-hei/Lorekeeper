@@ -16,6 +16,62 @@ public static class TranslationTextNormalizer
         @"[ \t]{2,}",
         RegexOptions.Compiled);
 
+    public static string RemoveSpeakerPrefix(
+        string? text,
+        string? speakerName)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        string result =
+            text.Trim();
+
+        if (string.IsNullOrWhiteSpace(speakerName))
+        {
+            return result;
+        }
+
+        string speaker =
+            speakerName.Trim();
+
+        if (!result.StartsWith(
+                speaker,
+                System.StringComparison.OrdinalIgnoreCase))
+        {
+            return result;
+        }
+
+        int separatorIndex =
+            speaker.Length;
+
+        while (separatorIndex < result.Length
+               && char.IsWhiteSpace(result[separatorIndex]))
+        {
+            separatorIndex++;
+        }
+
+        if (separatorIndex >= result.Length
+            || (result[separatorIndex] != ':'
+                && result[separatorIndex] != '\uFF1A'))
+        {
+            return result;
+        }
+
+        separatorIndex++;
+
+        while (separatorIndex < result.Length
+               && char.IsWhiteSpace(result[separatorIndex]))
+        {
+            separatorIndex++;
+        }
+
+        return separatorIndex < result.Length
+            ? result[separatorIndex..].TrimStart()
+            : string.Empty;
+    }
+
     public static string Normalize(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))

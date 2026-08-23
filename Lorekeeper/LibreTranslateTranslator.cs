@@ -22,17 +22,20 @@ public sealed class LibreTranslateTranslator : ITranslator
     private readonly TranslationCache cache;
     private readonly ILorekeeperLogger logger;
     private readonly ConversationMemory? conversationMemory;
+    private readonly LocalProperNounStore? localProperNounStore;
     private readonly string endpoint;
 
     public LibreTranslateTranslator(
         TranslationCache cache,
         ILorekeeperLogger logger,
         ConversationMemory? conversationMemory = null,
+        LocalProperNounStore? localProperNounStore = null,
         string baseUrl = "http://127.0.0.1:5000")
     {
         this.cache = cache ?? throw new ArgumentNullException(nameof(cache));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.conversationMemory = conversationMemory;
+        this.localProperNounStore = localProperNounStore;
 
         string normalizedBaseUrl =
             string.IsNullOrWhiteSpace(baseUrl)
@@ -166,9 +169,15 @@ public sealed class LibreTranslateTranslator : ITranslator
             logger.Information(
                 $"LIBRE: Wysyłanie zapytania do {endpoint}...");
 
+            ProtectedProperNounText protectedText =
+                localProperNounStore?.Protect(text)
+                ?? new ProtectedProperNounText(
+                    text,
+                    new System.Collections.Generic.Dictionary<string, string>());
+
             var request = new LibreTranslateRequest
             {
-                Q = text,
+                Q = protectedText.Text,
                 Source = SourceLanguage,
                 Target = TargetLanguage,
                 Format = "text"
@@ -211,6 +220,11 @@ public sealed class LibreTranslateTranslator : ITranslator
             string translatedText =
                 result?.TranslatedText?.Trim()
                 ?? string.Empty;
+
+            translatedText =
+                LocalProperNounStore.Restore(
+                    translatedText,
+                    protectedText.Replacements);
 
             if (string.IsNullOrWhiteSpace(translatedText))
             {
@@ -310,9 +324,18 @@ public sealed class LibreTranslateTranslator : ITranslator
         }
     }
 
-    private static string CreateCacheKey(string text)
+    private string CreateCacheKey(string text)
     {
-        return $"{CacheKeyVersion}\u001F{SourceLanguage}\u001F{TargetLanguage}\u001F{text}";
+        string baseKey =
+            $"{CacheKeyVersion}\u001F{SourceLanguage}\u001F{TargetLanguage}\u001F{text}";
+
+        string fingerprint =
+            localProperNounStore?.GetCacheFingerprint(text)
+            ?? string.Empty;
+
+        return string.IsNullOrWhiteSpace(fingerprint)
+            ? baseKey
+            : $"{baseKey}\u001FLOCAL_NAMES:{fingerprint}";
     }
 
     private static TranslationResult CreateResult(

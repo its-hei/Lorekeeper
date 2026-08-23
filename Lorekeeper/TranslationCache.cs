@@ -46,6 +46,20 @@ public sealed class TranslationCache
         }
     }
 
+    public int Clear()
+    {
+        lock (syncRoot)
+        {
+            int removedEntries =
+                translations.Count;
+
+            translations.Clear();
+            Save();
+
+            return removedEntries;
+        }
+    }
+
     private void Load()
     {
         if (!File.Exists(filePath))

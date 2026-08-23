@@ -8,27 +8,73 @@ namespace Lorekeeper;
 
 public sealed class Translator : ITranslator
 {
-    private const decimal InputPricePerMillionTokens = 0.15m;
-    private const decimal OutputPricePerMillionTokens = 0.60m;
-    private const string CacheKeyVersion = "4";
+    private const decimal Gpt4oMiniInputPricePerMillionTokens = 0.15m;
+    private const decimal Gpt4oMiniCachedInputPricePerMillionTokens = 0.075m;
+    private const decimal Gpt4oMiniOutputPricePerMillionTokens = 0.60m;
+
+    private const decimal Gpt56LunaInputPricePerMillionTokens = 0.20m;
+    private const decimal Gpt56LunaCachedInputPricePerMillionTokens = 0.02m;
+    private const decimal Gpt56LunaOutputPricePerMillionTokens = 1.20m;
+
+    private const decimal Gpt41MiniInputPricePerMillionTokens = 0.40m;
+    private const decimal Gpt41MiniCachedInputPricePerMillionTokens = 0.10m;
+    private const decimal Gpt41MiniOutputPricePerMillionTokens = 1.60m;
+    private const string CacheKeyVersion = "5";
 
     private const string SystemPrompt =
-        "Jesteś profesjonalnym tłumaczem dialogów z gry Final Fantasy XIV. " +
-        "Tłumacz z języka angielskiego na naturalny, współczesny język polski. " +
+        "Jesteś profesjonalnym tłumaczem dialogów z gry Final Fantasy XIV " +
+        "z języka angielskiego na język polski. " +
+        "Najważniejsza zasada: najpierw WIERNOŚĆ ZNACZENIU, potem naturalność, " +
+        "a dopiero na końcu styl i charakter postaci. " +
+        "Zachowuj jawne znaczenie każdej kwestii. Nie zastępuj słów i pojęć " +
+        "pojęciami pokrewnymi, interpretacją sytuacji ani domyślnym sensem. " +
+        "Nie streszczaj, nie parafrazuj, nie upiększaj i nie dopisuj emocji, " +
+        "których nie ma w tekście źródłowym. " +
+        "Naturalizuj składnię tylko wtedy, gdy jest to potrzebne, aby zdanie " +
+        "brzmiało poprawnie po polsku, ale nigdy kosztem zmiany znaczenia. " +
+        "Jeśli istnieje kilka naturalnych polskich wersji, wybierz tę, która " +
+        "jest znaczeniowo i strukturalnie najbliższa angielskiemu oryginałowi. " +
+        "Zachowuj kolejność myśli, pytania, wykrzyknienia, zawahania, powtórzenia, " +
+        "żarty, zwroty retoryczne, formy grzecznościowe i bezpośrednie zwroty " +
+        "do rozmówcy. Nie pomijaj określeń takich jak 'my', 'dear', 'good', " +
+        "tytułów ani innych elementów zwrotu do adresata, jeśli występują w źródle. " +
+        "Przykład 1: 'Are you getting sleepy? Because I sure am! " +
+        "Let's call it a day, shall we?' -> " +
+        "'Czujesz się śpiący? Bo ja na pewno! Może zakończmy na dzisiaj, co?'. " +
+        "Nie tłumacz 'sleepy' jako 'nudzić się', ponieważ zmienia to znaczenie. " +
+        "Przykład 2: 'Enjoy yourself, my good detective.' -> " +
+        "'Ciesz się, mój dobry detektywie.'. " +
+        "Nie pomijaj zwrotu 'my good detective' i nie zastępuj go luźniejszą " +
+        "parafrazą typu 'baw się dobrze, detektywie'. " +
+        "Przykład 3: gdy kontekst fabularny mówi, że 'my faithful assistant' " +
+        "Hildibranda oznacza Nashu Mhakaracca, tłumacz tę referencję w rodzaju " +
+        "żeńskim, np. 'z moją wierną asystentką', a nie 'z moim wiernym asystentem'. " +
+        "Kontekst rozmowy służy wyłącznie do rozwiązywania niejednoznaczności, " +
+        "ustalania referencji, płci, tonu i ciągłości rozmowy. " +
+        "Jeżeli przekazano osobny kontekst fabularny dotyczący osoby trzeciej, " +
+        "użyj go do poprawnego rozpoznania, do kogo odnosi się mówca, oraz do " +
+        "doboru właściwego rodzaju gramatycznego tej osoby. " +
+        "Kontekst NIGDY nie może nadpisywać jawnego znaczenia aktualnie " +
+        "tłumaczonej kwestii. " +
         "Płeć postaci wykorzystuj do poprawnej odmiany czasowników, zaimków, " +
         "przymiotników i innych form gramatycznych, ale nie twórz sztucznych " +
         "ani nienaturalnych feminatywów lub maskulinatywów tylko dlatego, " +
         "że znasz płeć postaci. Jeśli naturalne polskie użycie albo ustalona " +
         "terminologia brzmi lepiej bez mechanicznego zaznaczania rodzaju, " +
-        "zachowaj tę formę. Naturalność polszczyzny ma pierwszeństwo przed " +
-        "mechanicznym zaznaczaniem płci. " +
-        "Zachowuj ton wypowiedzi, emocje oraz klimat fantasy. " +
+        "zachowaj tę formę. " +
+        "Zachowuj ton wypowiedzi, emocje oraz klimat fantasy, o ile nie wymaga " +
+        "to zmiany literalnego sensu kwestii. " +
         "Nie tłumacz nazw postaci, lokacji, organizacji, przedmiotów, " +
         "jobów, klas, umiejętności, dungeonów, triali i raidów. " +
         "Informacja o płci postaci gracza dotyczy wyłącznie postaci gracza " +
         "jako możliwego adresata wypowiedzi. Nie przenoś jej na NPC mówiącego. " +
-        "Nazwa NPC jest wyłącznie identyfikatorem mówcy. Nie wnioskuj płci NPC " +
-        "z imienia, przydomka ani brzmienia nazwy. Jeśli płeć mówcy nie wynika " +
+        "Nazwa NPC jest wyłącznie identyfikatorem mówcy. Nie umieszczaj nazwy NPC " +
+        "na początku tłumaczenia ani nie zwracaj etykiety mówcy w formie " +
+        "'NPC:', ponieważ interfejs Lorekeepera wyświetla nazwę mówcy osobno. " +
+        "Przykład: jeśli mówcą jest Monom, odpowiedź ma zaczynać się bezpośrednio " +
+        "od treści tłumaczenia, nigdy od 'Monom:'. " +
+        "Nie wnioskuj płci NPC z imienia, przydomka ani brzmienia nazwy. " +
+        "Jeśli płeć mówcy nie wynika " +
         "jednoznacznie z przekazanego kontekstu lub treści dialogu, stosuj " +
         "naturalne konstrukcje neutralne płciowo i nie zgaduj rodzaju. " +
         "Nie dodawaj objaśnień, komentarzy, etykiet ani cudzysłowów. " +
@@ -39,8 +85,11 @@ public sealed class Translator : ITranslator
     private readonly TranslationCache cache;
     private readonly ILorekeeperLogger logger;
     private readonly TerminologyStore? terminologyStore;
+    private readonly LocalProperNounStore? localProperNounStore;
     private readonly ConversationMemory? conversationMemory;
     private readonly string cacheNamespace;
+    private readonly string model;
+    private readonly Action<decimal>? usageRecorder;
     private readonly ChatClient? chatClient;
 
     public Translator(
@@ -51,6 +100,7 @@ public sealed class Translator : ITranslator
             cache,
             options,
             logger,
+            null,
             null,
             null)
     {
@@ -66,6 +116,7 @@ public sealed class Translator : ITranslator
             options,
             logger,
             terminologyStore,
+            null,
             null)
     {
     }
@@ -75,12 +126,17 @@ public sealed class Translator : ITranslator
         OpenAiTranslatorOptions options,
         ILorekeeperLogger logger,
         TerminologyStore? terminologyStore,
-        ConversationMemory? conversationMemory)
+        LocalProperNounStore? localProperNounStore,
+        ConversationMemory? conversationMemory,
+        Action<decimal>? usageRecorder = null)
     {
         this.cache = cache ?? throw new ArgumentNullException(nameof(cache));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.terminologyStore = terminologyStore;
+        this.localProperNounStore = localProperNounStore;
         this.conversationMemory = conversationMemory;
+        this.usageRecorder = usageRecorder;
+        model = options.Model;
         cacheNamespace = $"{CacheKeyVersion}\u001F{options.Model}";
 
         if (string.IsNullOrWhiteSpace(options.ApiKey))
@@ -166,14 +222,32 @@ public sealed class Translator : ITranslator
         logger.Information(
             "OPENAI: Tłumaczenie znalezione w lokalnej bazie.");
 
+        string sanitizedTranslation =
+            TranslationTextNormalizer.RemoveSpeakerPrefix(
+                cachedTranslation,
+                npcName);
+
+        if (!string.Equals(
+                cachedTranslation,
+                sanitizedTranslation,
+                StringComparison.Ordinal))
+        {
+            TrySaveToCache(
+                cacheKey,
+                sanitizedTranslation);
+
+            logger.Information(
+                "OPENAI CACHE: Usunięto zbędny prefiks nazwy mówcy.");
+        }
+
         conversationMemory?.Add(
             npcName,
             text,
-            cachedTranslation);
+            sanitizedTranslation);
 
         result = CreateResult(
             text,
-            cachedTranslation,
+            sanitizedTranslation,
             fromCache: true);
 
         return true;
@@ -199,9 +273,32 @@ public sealed class Translator : ITranslator
                 npcName,
                 context);
 
-        return cache.TryGet(
-            cacheKey,
-            out translatedText!);
+        if (!cache.TryGet(
+                cacheKey,
+                out translatedText!))
+        {
+            return false;
+        }
+
+        string sanitizedTranslation =
+            TranslationTextNormalizer.RemoveSpeakerPrefix(
+                translatedText,
+                npcName);
+
+        if (!string.Equals(
+                translatedText,
+                sanitizedTranslation,
+                StringComparison.Ordinal))
+        {
+            translatedText =
+                sanitizedTranslation;
+
+            TrySaveToCache(
+                cacheKey,
+                translatedText);
+        }
+
+        return true;
     }
 
     public TranslationResult StoreCloudTranslation(
@@ -218,21 +315,26 @@ public sealed class Translator : ITranslator
                 npcName,
                 context);
 
+        string sanitizedTranslation =
+            TranslationTextNormalizer.RemoveSpeakerPrefix(
+                translatedText,
+                npcName);
+
         TrySaveToCache(
             cacheKey,
-            translatedText);
+            sanitizedTranslation);
 
         conversationMemory?.Add(
             npcName,
             text,
-            translatedText);
+            sanitizedTranslation);
 
         logger.Information(
             "OPENAI CACHE: Zapisano tłumaczenie pobrane z Lorekeeper Cloud.");
 
         return CreateResult(
             text,
-            translatedText,
+            sanitizedTranslation,
             fromCache: true);
     }
 
@@ -257,7 +359,10 @@ public sealed class Translator : ITranslator
             logger.Information(
                 $"OPENAI: Odpowiedź odebrana po {stopwatch.ElapsedMilliseconds} ms.");
 
-            string translatedText = GetTranslatedText(completion);
+            string translatedText =
+                TranslationTextNormalizer.RemoveSpeakerPrefix(
+                    GetTranslatedText(completion),
+                    npcName);
 
             if (string.IsNullOrWhiteSpace(translatedText))
             {
@@ -269,11 +374,32 @@ public sealed class Translator : ITranslator
                     "OpenAI zwróciło pustą odpowiedź.");
             }
 
-            int inputTokens = completion.Usage?.InputTokenCount ?? 0;
-            int outputTokens = completion.Usage?.OutputTokenCount ?? 0;
-            decimal costUsd = CalculateCost(inputTokens, outputTokens);
+            int inputTokens =
+                completion.Usage?.InputTokenCount
+                ?? 0;
 
-            LogUsage(inputTokens, outputTokens, costUsd);
+            int cachedInputTokens =
+                completion.Usage?.InputTokenDetails?.CachedTokenCount
+                ?? 0;
+
+            int outputTokens =
+                completion.Usage?.OutputTokenCount
+                ?? 0;
+
+            decimal costUsd =
+                CalculateCost(
+                    model,
+                    inputTokens,
+                    cachedInputTokens,
+                    outputTokens);
+
+            LogUsage(
+                inputTokens,
+                outputTokens,
+                costUsd);
+
+            usageRecorder?.Invoke(
+                costUsd);
 
             string cacheKey = CreateCacheKey(text, npcName, context);
             TrySaveToCache(cacheKey, translatedText);
@@ -346,8 +472,21 @@ public sealed class Translator : ITranslator
         string terminologyContext =
             BuildTerminologyContext(text, context);
 
+        string localProperNounContext =
+            BuildLocalProperNounContext(text);
+
         string conversationContext =
             BuildConversationContext();
+
+        LoreReferenceInfo loreReference =
+            LoreReferenceContext.Resolve(
+                npcName,
+                text);
+
+        string loreContext =
+            loreReference.HasContext
+                ? loreReference.PromptContext
+                : string.Empty;
 
         return
         [
@@ -356,8 +495,13 @@ public sealed class Translator : ITranslator
                 $"Kontekst adresata: {playerContext}\n" +
                 $"Kontekst mówcy: {speakerContext}\n" +
                 terminologyContext +
+                localProperNounContext +
                 conversationContext +
+                loreContext +
                 $"NPC/mówca: {npcName}\n" +
+                "Przetłumacz poniższą kwestię wiernie. Kontekst może pomóc " +
+                "rozwiązać niejednoznaczność, ale nie może zmieniać jawnego " +
+                "znaczenia tekstu źródłowego.\n" +
                 $"Dialog do przetłumaczenia:\n{text}")
         ];
     }
@@ -450,6 +594,37 @@ public sealed class Translator : ITranslator
             "\n";
     }
 
+    private string BuildLocalProperNounContext(
+        string text)
+    {
+        if (localProperNounStore is null)
+        {
+            return string.Empty;
+        }
+
+        IReadOnlyList<string> matches =
+            localProperNounStore.GetMatches(text);
+
+        if (matches.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        List<string> rules = new();
+
+        foreach (string name in matches)
+        {
+            rules.Add(
+                $"- '{name}' zachowaj dokładnie w oryginalnej formie. " +
+                "Nie tłumacz tej nazwy i nie zmieniaj jej pisowni.");
+        }
+
+        return
+            "Prywatne lokalne nazwy własne dla tej kwestii:\n" +
+            string.Join("\n", rules) +
+            "\n";
+    }
+
     private void TrySaveToCache(
         string cacheKey,
         string translatedText)
@@ -478,11 +653,31 @@ public sealed class Translator : ITranslator
         string terminologyKey =
             CreateTerminologyCacheKey(text);
 
-        return $"{cacheNamespace}\u001F" +
-               $"{context.PlayerCharacterSex}\u001F" +
-               $"{context.SpeakerSex}\u001F" +
-               $"{terminologyKey}\u001F" +
-               $"{npcName}\u001F{text}";
+        string localProperNounKey =
+            CreateLocalProperNounCacheKey(text);
+
+        LoreReferenceInfo loreReference =
+            LoreReferenceContext.Resolve(
+                npcName,
+                text);
+
+        string baseKey =
+            $"{cacheNamespace}\u001F" +
+            $"{context.PlayerCharacterSex}\u001F" +
+            $"{context.SpeakerSex}\u001F" +
+            $"{terminologyKey}\u001F" +
+            $"{npcName}\u001F{text}";
+
+        if (!string.IsNullOrWhiteSpace(
+                localProperNounKey))
+        {
+            baseKey +=
+                $"\u001FLOCAL_NAMES:{localProperNounKey}";
+        }
+
+        return loreReference.HasContext
+            ? $"{baseKey}\u001FLORE:{loreReference.Fingerprint}"
+            : baseKey;
     }
 
     private string CreateTerminologyCacheKey(string text)
@@ -514,6 +709,13 @@ public sealed class Translator : ITranslator
             : string.Join(";", parts);
     }
 
+    private string CreateLocalProperNounCacheKey(
+        string text)
+    {
+        return localProperNounStore?.GetCacheFingerprint(text)
+            ?? string.Empty;
+    }
+
     private static string GetTranslatedText(ChatCompletion completion)
     {
         return completion.Content.Count > 0
@@ -522,18 +724,85 @@ public sealed class Translator : ITranslator
     }
 
     private static decimal CalculateCost(
+        string model,
         int inputTokens,
+        int cachedInputTokens,
         int outputTokens)
     {
-        decimal inputCost =
-            inputTokens / 1_000_000m
-            * InputPricePerMillionTokens;
+        (
+            decimal inputPrice,
+            decimal cachedInputPrice,
+            decimal outputPrice) =
+                GetPricing(
+                    model);
+
+        int safeCachedInputTokens =
+            Math.Clamp(
+                cachedInputTokens,
+                0,
+                Math.Max(
+                    0,
+                    inputTokens));
+
+        int regularInputTokens =
+            Math.Max(
+                0,
+                inputTokens - safeCachedInputTokens);
+
+        decimal regularInputCost =
+            regularInputTokens
+            / 1_000_000m
+            * inputPrice;
+
+        decimal cachedInputCost =
+            safeCachedInputTokens
+            / 1_000_000m
+            * cachedInputPrice;
 
         decimal outputCost =
-            outputTokens / 1_000_000m
-            * OutputPricePerMillionTokens;
+            Math.Max(
+                0,
+                outputTokens)
+            / 1_000_000m
+            * outputPrice;
 
-        return inputCost + outputCost;
+        return regularInputCost
+               + cachedInputCost
+               + outputCost;
+    }
+
+    private static (
+        decimal Input,
+        decimal CachedInput,
+        decimal Output) GetPricing(
+        string model)
+    {
+        if (string.Equals(
+                model,
+                "gpt-5.6-luna",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return (
+                Gpt56LunaInputPricePerMillionTokens,
+                Gpt56LunaCachedInputPricePerMillionTokens,
+                Gpt56LunaOutputPricePerMillionTokens);
+        }
+
+        if (string.Equals(
+                model,
+                "gpt-4.1-mini",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return (
+                Gpt41MiniInputPricePerMillionTokens,
+                Gpt41MiniCachedInputPricePerMillionTokens,
+                Gpt41MiniOutputPricePerMillionTokens);
+        }
+
+        return (
+            Gpt4oMiniInputPricePerMillionTokens,
+            Gpt4oMiniCachedInputPricePerMillionTokens,
+            Gpt4oMiniOutputPricePerMillionTokens);
     }
 
     private void LogUsage(

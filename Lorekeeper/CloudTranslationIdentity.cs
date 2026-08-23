@@ -18,7 +18,14 @@ public sealed record CloudTranslationIdentity(
 
 public sealed class CloudTranslationIdentityBuilder
 {
+    // Wersja protokołu/rekordu akceptowana obecnie przez Worker.
     public const int ProfileVersion = 1;
+
+    // Zmiana zasad tłumaczenia musi tworzyć nowy lookup key,
+    // żeby starsze, bardziej swobodne tłumaczenia nie były zwracane
+    // przez Lorekeeper Cloud. Nie wymaga to zmiany Workera.
+    private const string TranslationProfileFingerprint =
+        "faithful-natural-v2";
 
     private const string SourceLanguage = "en";
     private const string TargetLanguage = "pl";
@@ -41,8 +48,14 @@ public sealed class CloudTranslationIdentityBuilder
         string terminologyFingerprint =
             CreateTerminologyFingerprint(text);
 
+        LoreReferenceInfo loreReference =
+            LoreReferenceContext.Resolve(
+                npcName,
+                text);
+
         string canonical =
             Part(ProfileVersion.ToString()) +
+            Part(TranslationProfileFingerprint) +
             Part(SourceLanguage) +
             Part(TargetLanguage) +
             Part(context.PlayerCharacterSex.ToString()) +
@@ -50,6 +63,13 @@ public sealed class CloudTranslationIdentityBuilder
             Part(npcName ?? string.Empty) +
             Part(terminologyFingerprint) +
             Part(text ?? string.Empty);
+
+        if (loreReference.HasContext)
+        {
+            canonical +=
+                Part(
+                    $"LORE:{loreReference.Fingerprint}");
+        }
 
         string lookupKey =
             Convert.ToHexString(

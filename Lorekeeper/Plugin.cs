@@ -18,6 +18,13 @@ public sealed class Plugin : IDalamudPlugin
 {
     private const string CommandName = "/lore";
     private const string TalkAddonName = "Talk";
+    private const string TalkSubtitleAddonName = "TalkSubtitle";
+
+    private static readonly TimeSpan SubtitlePollInterval =
+        TimeSpan.FromMilliseconds(100);
+
+    private static readonly TimeSpan SubtitleResetDelay =
+        TimeSpan.FromMilliseconds(750);
 
     [PluginService]
     internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
@@ -40,6 +47,12 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService]
     internal static ITextureProvider TextureProvider { get; private set; } = null!;
 
+    [PluginService]
+    internal static IGameGui GameGui { get; private set; } = null!;
+
+    [PluginService]
+    internal static IFramework Framework { get; private set; } = null!;
+
     private readonly WindowSystem windowSystem = new("Lorekeeper");
     private readonly ConfigWindow configWindow;
     private readonly MainWindow mainWindow;
@@ -48,15 +61,25 @@ public sealed class Plugin : IDalamudPlugin
     private readonly NpcKnowledgeStore npcKnowledgeStore;
     private readonly NpcSexResolver npcSexResolver;
     private readonly TerminologyStore terminologyStore;
-    private readonly TerminologyProposalStore terminologyProposalStore;
+    private readonly LocalProperNounStore localProperNounStore;
     private readonly ConversationMemory conversationMemory;
     private readonly ObsOverlayServer obsOverlayServer;
     private readonly LibreTranslateRuntimeManager libreTranslateRuntimeManager;
     private readonly LorekeeperCloudClient cloudClient;
+    private readonly OpenAiUsageTracker openAiUsageTracker;
+    private readonly TranslationCache openAiTranslationCache;
+    private readonly TranslationCache libreTranslationCache;
+    private readonly TalkSubtitleReader talkSubtitleReader;
+
+    private string lastTalkSubtitleKey = string.Empty;
+    private DateTime lastTalkSubtitlePollAt = DateTime.MinValue;
+    private DateTime lastTalkSubtitleTextSeenAt = DateTime.MinValue;
+
+    private bool isTalkOpen;
+    private bool isTalkSubtitleOpen;
 
     public Plugin()
     {
-        Log.Information("LOREKEEPER BUILD: KNOWLEDGE TEST 2");
         Log.Information(
             $"LOREKEEPER DLL: {typeof(Plugin).Assembly.Location}");
 
@@ -97,18 +120,16 @@ public sealed class Plugin : IDalamudPlugin
         Log.Information(
             $"TERMINOLOGY FILE: {terminologyPath}");
 
-        string terminologyProposalsPath = Path.Combine(
+        string localProperNamesPath = Path.Combine(
             PluginInterface.ConfigDirectory.FullName,
-            "terminology-proposals.json");
+            "proper-names.local.json");
 
-        terminologyProposalStore =
-            new TerminologyProposalStore(
-                terminologyProposalsPath,
-                lorekeeperLogger);
+        localProperNounStore = new LocalProperNounStore(
+            localProperNamesPath,
+            lorekeeperLogger);
 
         Log.Information(
-            $"TERMINOLOGY PROPOSALS FILE: " +
-            $"{terminologyProposalsPath}");
+            $"LOCAL PROPER NAMES FILE: {localProperNamesPath}");
 
         libreTranslateRuntimeManager =
             new LibreTranslateRuntimeManager(
@@ -123,10 +144,38 @@ public sealed class Plugin : IDalamudPlugin
                 terminologyStore,
                 lorekeeperLogger);
 
+        openAiUsageTracker =
+            new OpenAiUsageTracker(
+                PluginInterface.ConfigDirectory.FullName,
+                lorekeeperLogger);
+
+        string openAiCachePath = Path.Combine(
+            PluginInterface.ConfigDirectory.FullName,
+            "translations.json");
+
+        string libreCachePath = Path.Combine(
+            PluginInterface.ConfigDirectory.FullName,
+            "translations-libre.json");
+
+        Log.Information(
+            $"OPENAI CACHE FILE: {openAiCachePath}");
+
+        Log.Information(
+            $"LIBRE CACHE FILE: {libreCachePath}");
+
+        openAiTranslationCache =
+            new TranslationCache(
+                openAiCachePath);
+
+        libreTranslationCache =
+            new TranslationCache(
+                libreCachePath);
+
+        talkSubtitleReader =
+            new TalkSubtitleReader(GameGui);
+
         configWindow = new ConfigWindow(
             this,
-            terminologyProposalStore,
-            terminologyStore,
             libreTranslateRuntimeManager);
 
         mainWindow = new MainWindow(this);
@@ -147,6 +196,10 @@ public sealed class Plugin : IDalamudPlugin
         RegisterUiCallbacks();
         RegisterTalkListeners();
 
+        // TalkSubtitle nie zawsze daje użyteczny lifecycle refresh.
+        // Odczytujemy widoczne TextNode co 100 ms.
+        Framework.Update += OnFrameworkUpdate;
+
         // Jeżeli lokalny LibreTranslate był wcześniej zainstalowany,
         // uruchamiamy go automatycznie po starcie pluginu.
         _ = libreTranslateRuntimeManager.StartIfInstalledAsync();
@@ -160,11 +213,77 @@ public sealed class Plugin : IDalamudPlugin
     internal DialogueSnapshot CurrentDialogue =>
         dialogueEngine.CurrentDialogue;
 
+    internal DialogueDisplayKind CurrentDialogueDisplayKind { get; private set; } =
+        DialogueDisplayKind.Normal;
+
+    internal bool IsConfigWindowOpen =>
+        configWindow.IsOpen;
+
+    internal void ShowDialoguePreview(
+        DialogueDisplayKind displayKind)
+    {
+        mainWindow.ShowPreview(
+            displayKind);
+    }
+
+    internal void HideDialoguePreview()
+    {
+        mainWindow.HidePreview();
+    }
+
+    internal bool IsDialoguePreviewActive(
+        DialogueDisplayKind displayKind)
+    {
+        return mainWindow.IsPreviewActive(
+            displayKind);
+    }
+
+    internal decimal OpenAiSessionCostUsd =>
+        openAiUsageTracker.SessionCostUsd;
+
+    internal decimal OpenAiTotalCostUsd =>
+        openAiUsageTracker.TotalCostUsd;
+
+    internal bool TryResetLocalTranslationDatabase(
+        out int removedEntries,
+        out string errorMessage)
+    {
+        removedEntries = 0;
+        errorMessage = string.Empty;
+
+        try
+        {
+            removedEntries +=
+                openAiTranslationCache.Clear();
+
+            removedEntries +=
+                libreTranslationCache.Clear();
+
+            Log.Information(
+                $"LOCAL CACHE: Wyczyszczono {removedEntries} tłumaczeń.");
+
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Log.Error(
+                exception,
+                "LOCAL CACHE: Nie udało się wyczyścić lokalnej bazy tłumaczeń.");
+
+            errorMessage =
+                "Nie udało się wyczyścić lokalnej bazy tłumaczeń.";
+
+            return false;
+        }
+    }
+
     public void Dispose()
     {
         obsOverlayServer.Dispose();
         cloudClient.Dispose();
         libreTranslateRuntimeManager.Dispose();
+
+        Framework.Update -= OnFrameworkUpdate;
 
         UnregisterTalkListeners();
         UnregisterUiCallbacks();
@@ -177,17 +296,6 @@ public sealed class Plugin : IDalamudPlugin
 
     private ITranslator CreateTranslator()
     {
-        string openAiCachePath = Path.Combine(
-            PluginInterface.ConfigDirectory.FullName,
-            "translations.json");
-
-        string libreCachePath = Path.Combine(
-            PluginInterface.ConfigDirectory.FullName,
-            "translations-libre.json");
-
-        Log.Information($"OPENAI CACHE FILE: {openAiCachePath}");
-        Log.Information($"LIBRE CACHE FILE: {libreCachePath}");
-
         var options = new OpenAiTranslatorOptions(
             Configuration.OpenAiApiKey,
             Configuration.OpenAiModel);
@@ -196,22 +304,26 @@ public sealed class Plugin : IDalamudPlugin
             new DalamudLorekeeperLogger(Log);
 
         var openAiTranslator = new Translator(
-            new TranslationCache(openAiCachePath),
+            openAiTranslationCache,
             options,
             translatorLogger,
             terminologyStore,
-            conversationMemory);
+            localProperNounStore,
+            conversationMemory,
+            openAiUsageTracker.Record);
 
         var libreTranslator = new LibreTranslateTranslator(
-            new TranslationCache(libreCachePath),
+            libreTranslationCache,
             translatorLogger,
-            conversationMemory);
+            conversationMemory,
+            localProperNounStore);
 
         return new TranslationRouter(
             Configuration,
             openAiTranslator,
             libreTranslator,
             cloudClient,
+            localProperNounStore,
             translatorLogger);
     }
 
@@ -284,6 +396,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string arguments)
     {
+        configWindow.ResetInformationSections();
         configWindow.Toggle();
     }
 
@@ -293,6 +406,94 @@ public sealed class Plugin : IDalamudPlugin
                 args,
                 out string npcName,
                 out string dialogue))
+        {
+            return;
+        }
+
+        isTalkOpen = true;
+
+        ProcessCapturedDialogue(
+            npcName,
+            dialogue,
+            TalkAddonName);
+    }
+
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        DateTime now = DateTime.UtcNow;
+
+        if (now - lastTalkSubtitlePollAt < SubtitlePollInterval)
+        {
+            return;
+        }
+
+        lastTalkSubtitlePollAt = now;
+
+        TalkSubtitleSnapshot snapshot;
+
+        try
+        {
+            snapshot = talkSubtitleReader.Read();
+        }
+        catch (Exception exception)
+        {
+            Log.Error(
+                exception,
+                "Nie udało się odczytać TalkSubtitle.");
+
+            return;
+        }
+
+        if (!snapshot.IsVisible
+            || string.IsNullOrWhiteSpace(snapshot.Dialogue))
+        {
+            if (isTalkSubtitleOpen
+                && now - lastTalkSubtitleTextSeenAt >= SubtitleResetDelay)
+            {
+                isTalkSubtitleOpen = false;
+                lastTalkSubtitleKey = string.Empty;
+
+                CloseDialogueIfNoSourceOpen(
+                    TalkSubtitleAddonName);
+            }
+
+            return;
+        }
+
+        lastTalkSubtitleTextSeenAt = now;
+        isTalkSubtitleOpen = true;
+        dialogueEngine.MarkOpen();
+
+        string speaker =
+            string.IsNullOrWhiteSpace(snapshot.Speaker)
+                ? "Cinematic"
+                : snapshot.Speaker;
+
+        string subtitleKey =
+            $"{speaker}\n{snapshot.Dialogue}";
+
+        if (string.Equals(
+                subtitleKey,
+                lastTalkSubtitleKey,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        lastTalkSubtitleKey = subtitleKey;
+
+        ProcessCapturedDialogue(
+            speaker,
+            snapshot.Dialogue,
+            TalkSubtitleAddonName);
+    }
+
+    private void ProcessCapturedDialogue(
+        string npcName,
+        string dialogue,
+        string source)
+    {
+        if (string.IsNullOrWhiteSpace(dialogue))
         {
             return;
         }
@@ -324,9 +525,15 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         mainWindow.IsOpen = true;
-        LogTranslationStarted(npcName, dialogue);
+        LogTranslationStarted(
+            source,
+            npcName,
+            dialogue);
 
-        _ = ObserveTranslationAsync(npcName, completion);
+        _ = ObserveTranslationAsync(
+            source,
+            npcName,
+            completion);
     }
 
     private PlayerSex ResolveAndRememberSpeakerSex(
@@ -361,18 +568,36 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnTalkClosed(AddonEvent eventType, AddonArgs args)
     {
-        dialogueEngine.MarkClosed();
-        conversationMemory.Clear();
-
-        Log.Information(
-            "CONVERSATION: Pamięć rozmowy została wyczyszczona.");
+        isTalkOpen = false;
 
         Log.Debug(
             $"Okno {TalkAddonName} zostało zamknięte lub ukryte. " +
             $"Event: {eventType}");
+
+        CloseDialogueIfNoSourceOpen(TalkAddonName);
+    }
+
+    private void CloseDialogueIfNoSourceOpen(string source)
+    {
+        if (isTalkOpen || isTalkSubtitleOpen)
+        {
+            return;
+        }
+
+        if (!dialogueEngine.CurrentDialogue.IsOpen)
+        {
+            return;
+        }
+
+        dialogueEngine.MarkClosed();
+        conversationMemory.Clear();
+
+        Log.Information(
+            $"CONVERSATION: Pamięć rozmowy została wyczyszczona. SOURCE: {source}");
     }
 
     private async Task ObserveTranslationAsync(
+        string source,
         string npcName,
         Task<TranslationResult?> completion)
     {
@@ -386,12 +611,23 @@ public sealed class Plugin : IDalamudPlugin
                 return;
             }
 
+            CurrentDialogueDisplayKind =
+                string.Equals(
+                    source,
+                    TalkSubtitleAddonName,
+                    StringComparison.Ordinal)
+                    ? DialogueDisplayKind.Cinematic
+                    : DialogueDisplayKind.Normal;
+
             if (dialogueEngine.CurrentDialogue.IsOpen)
             {
                 mainWindow.IsOpen = true;
             }
 
-            LogTranslationCompleted(npcName, result);
+            LogTranslationCompleted(
+                source,
+                npcName,
+                result);
         }
         catch (Exception exception)
         {
@@ -402,20 +638,22 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     private static void LogTranslationStarted(
+        string source,
         string npcName,
         string dialogue)
     {
-        Log.Information($"SOURCE: {TalkAddonName}");
+        Log.Information($"SOURCE: {source}");
         Log.Information($"NPC: {npcName}");
         Log.Information($"ORIGINAL: {dialogue}");
         Log.Information("TRANSLATION: oczekiwanie...");
     }
 
     private static void LogTranslationCompleted(
+        string source,
         string npcName,
         TranslationResult result)
     {
-        Log.Information($"SOURCE: {TalkAddonName}");
+        Log.Information($"SOURCE: {source}");
         Log.Information($"NPC: {npcName}");
         Log.Information($"TRANSLATION: {result.TranslatedText}");
         Log.Information($"CACHE: {result.FromCache}");
@@ -426,6 +664,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void ToggleConfigUi()
     {
+        configWindow.ResetInformationSections();
         configWindow.Toggle();
     }
 

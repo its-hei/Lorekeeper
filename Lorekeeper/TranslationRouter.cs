@@ -9,6 +9,7 @@ public sealed class TranslationRouter : ITranslator
     private readonly Translator openAiTranslator;
     private readonly LibreTranslateTranslator libreTranslator;
     private readonly LorekeeperCloudClient cloudClient;
+    private readonly LocalProperNounStore localProperNounStore;
     private readonly ILorekeeperLogger logger;
 
     public TranslationRouter(
@@ -16,6 +17,7 @@ public sealed class TranslationRouter : ITranslator
         Translator openAiTranslator,
         LibreTranslateTranslator libreTranslator,
         LorekeeperCloudClient cloudClient,
+        LocalProperNounStore localProperNounStore,
         ILorekeeperLogger logger)
     {
         this.configuration = configuration
@@ -30,6 +32,9 @@ public sealed class TranslationRouter : ITranslator
         this.cloudClient = cloudClient
             ?? throw new ArgumentNullException(nameof(cloudClient));
 
+        this.localProperNounStore = localProperNounStore
+            ?? throw new ArgumentNullException(nameof(localProperNounStore));
+
         this.logger = logger
             ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -40,6 +45,9 @@ public sealed class TranslationRouter : ITranslator
         TranslationContext context)
     {
         context ??= TranslationContext.Default;
+
+        bool usesPrivateProperName =
+            localProperNounStore.HasMatch(text);
 
         // 1. Najwyższy priorytet: istniejący lokalny cache OpenAI.
         if (openAiTranslator.TryGetCachedTranslation(
@@ -55,23 +63,37 @@ public sealed class TranslationRouter : ITranslator
         }
 
         // 2. Wspólna biblioteka zawiera WYŁĄCZNIE tłumaczenia OpenAI.
-        // Sprawdzamy ją również wtedy, gdy użytkownik wybrał Libre.
-        CloudTranslationHit? cloudHit =
-            await cloudClient.TryGetOpenAiAsync(
-                text,
-                npcName,
-                context);
+        // Cloud można całkowicie wyłączyć w ustawieniach użytkownika.
+        if (configuration.CloudEnabled
+            && !usesPrivateProperName)
+        {
+            CloudTranslationHit? cloudHit =
+                await cloudClient.TryGetOpenAiAsync(
+                    text,
+                    npcName,
+                    context);
 
-        if (cloudHit is not null)
+            if (cloudHit is not null)
+            {
+                logger.Information(
+                    "ROUTER: Lorekeeper Cloud HIT OpenAI.");
+
+                return openAiTranslator.StoreCloudTranslation(
+                    text,
+                    npcName,
+                    context,
+                    cloudHit.TranslatedText);
+            }
+        }
+        else if (usesPrivateProperName)
         {
             logger.Information(
-                "ROUTER: Lorekeeper Cloud HIT OpenAI.");
-
-            return openAiTranslator.StoreCloudTranslation(
-                text,
-                npcName,
-                context,
-                cloudHit.TranslatedText);
+                "ROUTER: Prywatna nazwa własna - pomijam Lorekeeper Cloud.");
+        }
+        else
+        {
+            logger.Information(
+                "ROUTER: Lorekeeper Cloud wyłączony.");
         }
 
         bool useLibre =
@@ -94,7 +116,10 @@ public sealed class TranslationRouter : ITranslator
             }
 
             logger.Information(
-                "ROUTER: Cloud OpenAI MISS. Uruchamiam lokalny LibreTranslate.");
+                configuration.CloudEnabled
+                && !usesPrivateProperName
+                    ? "ROUTER: Cloud OpenAI MISS. Uruchamiam lokalny LibreTranslate."
+                    : "ROUTER: Uruchamiam lokalny LibreTranslate.");
 
             return await libreTranslator.TranslateAsync(
                 text,
@@ -105,7 +130,10 @@ public sealed class TranslationRouter : ITranslator
         // 4. OpenAI tworzy nowe tłumaczenie, a po sukcesie
         // wynik jest synchronizowany z Cloud w tle.
         logger.Information(
-            "ROUTER: Cloud OpenAI MISS. Uruchamiam OpenAI.");
+            configuration.CloudEnabled
+            && !usesPrivateProperName
+                ? "ROUTER: Cloud OpenAI MISS. Uruchamiam OpenAI."
+                : "ROUTER: Uruchamiam OpenAI.");
 
         TranslationResult openAiResult =
             await openAiTranslator.TranslateAsync(
@@ -113,7 +141,9 @@ public sealed class TranslationRouter : ITranslator
                 npcName,
                 context);
 
-        if (openAiTranslator.TryGetCachedText(
+        if (configuration.CloudEnabled
+            && !usesPrivateProperName
+            && openAiTranslator.TryGetCachedText(
                 text,
                 npcName,
                 context,
