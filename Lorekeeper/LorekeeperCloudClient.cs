@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -12,6 +13,7 @@ namespace Lorekeeper;
 public sealed record CloudTranslationHit(
     string TranslatedText,
     string? Model,
+    string? ClientVersion,
     int Confirmations);
 
 public sealed class LorekeeperCloudClient : IDisposable
@@ -25,6 +27,7 @@ public sealed class LorekeeperCloudClient : IDisposable
     private readonly ILorekeeperLogger logger;
     private readonly CloudTranslationIdentityBuilder identityBuilder;
     private readonly HttpClient httpClient = new();
+    private readonly ConcurrentDictionary<string, byte> submittedPayloads = new();
     private readonly string clientVersion;
     private bool disposed;
 
@@ -141,6 +144,7 @@ public sealed class LorekeeperCloudClient : IDisposable
             return new CloudTranslationHit(
                 result.TranslatedText.Trim(),
                 result.Model,
+                result.ClientVersion,
                 result.Confirmations);
         }
         catch (OperationCanceledException)
@@ -186,6 +190,19 @@ public sealed class LorekeeperCloudClient : IDisposable
                 npcName,
                 context);
 
+        string normalizedTranslation =
+            translatedText.Trim();
+
+        string submitDedupeKey =
+            identity.LookupKey + "\u001F" + normalizedTranslation;
+
+        if (!submittedPayloads.TryAdd(
+                submitDedupeKey,
+                0))
+        {
+            return;
+        }
+
         var payload =
             new SubmitRequest
             {
@@ -200,7 +217,7 @@ public sealed class LorekeeperCloudClient : IDisposable
                 SourceText =
                     identity.SourceText,
                 TranslatedText =
-                    translatedText.Trim(),
+                    normalizedTranslation,
                 NpcName =
                     identity.NpcName,
                 PlayerSex =
@@ -250,15 +267,39 @@ public sealed class LorekeeperCloudClient : IDisposable
 
             if (!response.IsSuccessStatusCode)
             {
+                submittedPayloads.TryRemove(
+                    submitDedupeKey,
+                    out _);
+
                 logger.Warning(
                     $"CLOUD: OpenAI submit HTTP {(int)response.StatusCode}.");
             }
         }
         catch
         {
+            submittedPayloads.TryRemove(
+                submitDedupeKey,
+                out _);
+
             // Cloud jest opcjonalny. Błąd uploadu nie może wpływać
             // na tłumaczenie widoczne dla gracza.
         }
+    }
+
+    public bool IsFromCurrentOrNewerClient(
+        string? cloudClientVersion)
+    {
+        if (!Version.TryParse(
+                clientVersion,
+                out Version? currentVersion)
+            || !Version.TryParse(
+                cloudClientVersion,
+                out Version? remoteVersion))
+        {
+            return false;
+        }
+
+        return remoteVersion.CompareTo(currentVersion) >= 0;
     }
 
     public void Dispose()
@@ -305,6 +346,9 @@ public sealed class LorekeeperCloudClient : IDisposable
 
         [JsonPropertyName("model")]
         public string? Model { get; init; }
+
+        [JsonPropertyName("clientVersion")]
+        public string? ClientVersion { get; init; }
 
         [JsonPropertyName("confirmations")]
         public int Confirmations { get; init; }

@@ -17,6 +17,7 @@ public sealed class MainWindow : Window, IDisposable
 
     private const float WindowBottomMargin = 190.0f;
     private const float CoverOriginalBottomMargin = 34.0f;
+    private const float BattleTalkGap = 30.0f;
 
     private const float CinematicWindowWidth = 1000.0f;
     private const float CinematicTextWidth = 900.0f;
@@ -383,6 +384,107 @@ public sealed class MainWindow : Window, IDisposable
             + viewport.Size.Y
             - bottomMargin
             + normalVerticalOffset);
+
+        // _BattleTalk może stać się widoczny pomiędzy dwoma tickami naszego
+        // pollera. Wtedy CurrentDialogueSource przez jedną klatkę nadal wskazuje
+        // poprzednią powierzchnię i ImGui zdąży narysować jej dolne tło, zanim
+        // PollBattleTalk przełączy layout na górny. Sam ShouldDrawContent() nie
+        // wystarcza, bo tło okna powstaje jeszcze przed Draw().
+        //
+        // Dlatego sprawdzamy widoczność _BattleTalk bezpośrednio w PreDraw i
+        // chowamy CAŁE okno poza viewportem zarówno podczas tej klatki przejściowej,
+        // jak i wtedy, gdy znamy już source, ale nie mamy jeszcze kotwicy.
+        bool pendingBattleTalkSource =
+            !IsBattleTalkDialogue()
+            && plugin.IsBattleTalkSurfaceVisibleNow();
+
+        bool battleTalkWaitingForAnchor =
+            IsBattleTalkDialogue()
+            && !plugin.TryGetBattleTalkScreenAnchor(
+                out _,
+                out _);
+
+        if (pendingBattleTalkSource
+            || battleTalkWaitingForAnchor)
+        {
+            ImGui.SetNextWindowPos(
+                new Vector2(
+                    viewport.Pos.X - 10000.0f,
+                    viewport.Pos.Y - 10000.0f),
+                ImGuiCond.Always);
+
+            ImGui.SetNextWindowBgAlpha(0.0f);
+
+            if (style == DialogueBubbleStyle.Classic)
+            {
+                Flags |=
+                    ImGuiWindowFlags.AlwaysAutoResize;
+
+                ImGui.SetNextWindowSize(
+                    new Vector2(activeWindowWidth, 0.0f),
+                    ImGuiCond.Always);
+            }
+            else
+            {
+                Flags &=
+                    ~ImGuiWindowFlags.AlwaysAutoResize;
+
+                ImGui.SetNextWindowSize(
+                    new Vector2(
+                        activeWindowWidth,
+                        CalculateStyledWindowHeight(
+                            style,
+                            activeWindowWidth)),
+                    ImGuiCond.Always);
+            }
+
+            return;
+        }
+
+        // _BattleTalk (krótkie kwestie NPC podczas walki) ma własną bańkę gry.
+        // Lorekeeper umieszczamy bezpośrednio NAD oryginalnym tekstem zamiast
+        // przy dolnej krawędzi ekranu. ScreenX/ScreenY pochodzą z TextNode
+        // bieżącej kwestii, więc pozycja podąża za HUD-em i skalą UI.
+        if (IsBattleTalkDialogue()
+            && plugin.TryGetBattleTalkScreenAnchor(
+                out float battleTalkCenterX,
+                out float battleTalkTopY))
+        {
+            float halfWidth =
+                activeWindowWidth * 0.5f;
+
+            float minimumCenterX =
+                viewport.Pos.X + halfWidth + 8.0f;
+
+            float maximumCenterX =
+                viewport.Pos.X
+                + viewport.Size.X
+                - halfWidth
+                - 8.0f;
+
+            float anchoredCenterX =
+                maximumCenterX > minimumCenterX
+                    ? Math.Clamp(
+                        battleTalkCenterX,
+                        minimumCenterX,
+                        maximumCenterX)
+                    : viewport.Pos.X + viewport.Size.X * 0.5f;
+
+            float anchoredBottomY =
+                Math.Clamp(
+                    battleTalkTopY
+                    - BattleTalkGap
+                    + normalVerticalOffset,
+                    viewport.Pos.Y + 96.0f,
+                    viewport.Pos.Y
+                    + viewport.Size.Y
+                    - 24.0f);
+
+            windowPosition =
+                new Vector2(
+                    anchoredCenterX,
+                    anchoredBottomY);
+        }
 
         ImGui.SetNextWindowPos(
             windowPosition,
@@ -1241,6 +1343,15 @@ public sealed class MainWindow : Window, IDisposable
             == DialogueDisplayKind.Cinematic;
     }
 
+    private bool IsBattleTalkDialogue()
+    {
+        return !previewActive
+               && string.Equals(
+                   plugin.CurrentDialogueSource,
+                   "_BattleTalk",
+                   StringComparison.Ordinal);
+    }
+
     private float CalculateCinematicWindowHeight()
     {
         float fontScale =
@@ -1456,6 +1567,25 @@ public sealed class MainWindow : Window, IDisposable
 
     private bool ShouldDrawContent()
     {
+        // Jeżeli gra już pokazuje _BattleTalk, ale nasz poller nie zdążył jeszcze
+        // przełączyć CurrentDialogueSource, nie wolno dorysować starego dolnego
+        // dialogu. To jest druga blokada obok ukrywania całego okna w layoutcie.
+        if (!IsBattleTalkDialogue()
+            && plugin.IsBattleTalkSurfaceVisibleNow())
+        {
+            return false;
+        }
+
+        // BattleTalk nie może korzystać z dolnego fallbacku. Jeżeli kotwica
+        // nie jest jeszcze gotowa, pokazujemy go dopiero po jej uzyskaniu.
+        if (IsBattleTalkDialogue()
+            && !plugin.TryGetBattleTalkScreenAnchor(
+                out _,
+                out _))
+        {
+            return false;
+        }
+
         return fadeAlpha > InvisibleAlphaThreshold
                && !string.IsNullOrWhiteSpace(currentDialogue.Translation);
     }

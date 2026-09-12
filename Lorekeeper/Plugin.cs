@@ -19,6 +19,8 @@ public sealed class Plugin : IDalamudPlugin
     private const string CommandName = "/lore";
     private const string TalkAddonName = "Talk";
     private const string TalkSubtitleAddonName = "TalkSubtitle";
+    private const string BattleTalkAddonName = "_BattleTalk";
+    private const string WideTextAddonName = "_WideText";
 
     private static readonly TimeSpan SubtitlePollInterval =
         TimeSpan.FromMilliseconds(100);
@@ -70,13 +72,25 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TranslationCache openAiTranslationCache;
     private readonly TranslationCache libreTranslationCache;
     private readonly TalkSubtitleReader talkSubtitleReader;
+    private readonly BattleTalkReader battleTalkReader;
+    private readonly WideTextReader wideTextReader;
 
     private string lastTalkSubtitleKey = string.Empty;
-    private DateTime lastTalkSubtitlePollAt = DateTime.MinValue;
+    private string lastBattleTalkKey = string.Empty;
+    private string lastWideTextKey = string.Empty;
+    private DateTime lastDialogueSurfacePollAt = DateTime.MinValue;
     private DateTime lastTalkSubtitleTextSeenAt = DateTime.MinValue;
+    private DateTime lastBattleTalkTextSeenAt = DateTime.MinValue;
+    private DateTime lastWideTextSeenAt = DateTime.MinValue;
 
     private bool isTalkOpen;
     private bool isTalkSubtitleOpen;
+    private bool isBattleTalkOpen;
+    private bool isWideTextOpen;
+
+    private bool hasBattleTalkScreenAnchor;
+    private float battleTalkAnchorCenterX;
+    private float battleTalkAnchorTopY;
 
     public Plugin()
     {
@@ -174,6 +188,12 @@ public sealed class Plugin : IDalamudPlugin
         talkSubtitleReader =
             new TalkSubtitleReader(GameGui);
 
+        battleTalkReader =
+            new BattleTalkReader(GameGui);
+
+        wideTextReader =
+            new WideTextReader(GameGui);
+
         configWindow = new ConfigWindow(
             this,
             libreTranslateRuntimeManager);
@@ -216,8 +236,35 @@ public sealed class Plugin : IDalamudPlugin
     internal DialogueDisplayKind CurrentDialogueDisplayKind { get; private set; } =
         DialogueDisplayKind.Normal;
 
+    internal string CurrentDialogueSource { get; private set; } = string.Empty;
+
     internal bool IsConfigWindowOpen =>
         configWindow.IsOpen;
+
+    internal bool IsBattleTalkSurfaceVisibleNow()
+    {
+        try
+        {
+            return battleTalkReader.IsSurfaceVisible();
+        }
+        catch
+        {
+            // Render-time safety check must never destabilize the overlay.
+            // If direct UI probing fails, fall back to the last polled state.
+            return isBattleTalkOpen;
+        }
+    }
+
+    internal bool TryGetBattleTalkScreenAnchor(
+        out float centerX,
+        out float topY)
+    {
+        centerX = battleTalkAnchorCenterX;
+        topY = battleTalkAnchorTopY;
+
+        return hasBattleTalkScreenAnchor
+               && isBattleTalkOpen;
+    }
 
     internal void ShowDialoguePreview(
         DialogueDisplayKind displayKind)
@@ -422,13 +469,21 @@ public sealed class Plugin : IDalamudPlugin
     {
         DateTime now = DateTime.UtcNow;
 
-        if (now - lastTalkSubtitlePollAt < SubtitlePollInterval)
+        if (now - lastDialogueSurfacePollAt < SubtitlePollInterval)
         {
             return;
         }
 
-        lastTalkSubtitlePollAt = now;
+        lastDialogueSurfacePollAt = now;
 
+        PollTalkSubtitle(now);
+        PollBattleTalk(now);
+        PollWideText(now);
+
+    }
+
+    private void PollTalkSubtitle(DateTime now)
+    {
         TalkSubtitleSnapshot snapshot;
 
         try
@@ -488,6 +543,136 @@ public sealed class Plugin : IDalamudPlugin
             TalkSubtitleAddonName);
     }
 
+    private void PollBattleTalk(DateTime now)
+    {
+        BattleTalkSnapshot snapshot;
+
+        try
+        {
+            snapshot = battleTalkReader.Read();
+        }
+        catch (Exception exception)
+        {
+            Log.Error(
+                exception,
+                "Nie udało się odczytać _BattleTalk.");
+
+            return;
+        }
+
+        if (!snapshot.IsVisible
+            || string.IsNullOrWhiteSpace(snapshot.Dialogue))
+        {
+            if (isBattleTalkOpen
+                && now - lastBattleTalkTextSeenAt >= SubtitleResetDelay)
+            {
+                isBattleTalkOpen = false;
+                lastBattleTalkKey = string.Empty;
+                hasBattleTalkScreenAnchor = false;
+
+                CloseDialogueIfNoSourceOpen(
+                    BattleTalkAddonName);
+            }
+
+            return;
+        }
+
+        lastBattleTalkTextSeenAt = now;
+        isBattleTalkOpen = true;
+
+        // _BattleTalk potrafi pojawić się o jedną lub kilka klatek wcześniej
+        // niż jego TextNode otrzyma poprawne ScreenX/ScreenY. Nie kasujemy
+        // ostatniej poprawnej kotwicy podczas takiej przejściowej klatki.
+        // Dzięki temu tłumaczenie nigdy nie spada do standardowej dolnej
+        // pozycji overlayu podczas inicjalizacji lub zmiany kwestii.
+        if (snapshot.HasScreenAnchor)
+        {
+            hasBattleTalkScreenAnchor = true;
+            battleTalkAnchorCenterX = snapshot.AnchorCenterX;
+            battleTalkAnchorTopY = snapshot.AnchorTopY;
+        }
+
+        dialogueEngine.MarkOpen();
+
+        string speaker =
+            string.IsNullOrWhiteSpace(snapshot.Speaker)
+                ? "Battle"
+                : snapshot.Speaker;
+
+        string battleTalkKey =
+            $"{speaker}\n{snapshot.Dialogue}";
+
+        if (string.Equals(
+                battleTalkKey,
+                lastBattleTalkKey,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        lastBattleTalkKey = battleTalkKey;
+
+        ProcessCapturedDialogue(
+            speaker,
+            snapshot.Dialogue,
+            BattleTalkAddonName);
+    }
+
+    private void PollWideText(DateTime now)
+    {
+        WideTextSnapshot snapshot;
+
+        try
+        {
+            snapshot = wideTextReader.Read();
+        }
+        catch (Exception exception)
+        {
+            Log.Error(
+                exception,
+                "Nie udało się odczytać _WideText.");
+
+            return;
+        }
+
+        if (!snapshot.IsVisible
+            || string.IsNullOrWhiteSpace(snapshot.Dialogue))
+        {
+            if (isWideTextOpen
+                && now - lastWideTextSeenAt >= SubtitleResetDelay)
+            {
+                isWideTextOpen = false;
+                lastWideTextKey = string.Empty;
+
+                CloseDialogueIfNoSourceOpen(
+                    WideTextAddonName);
+            }
+
+            return;
+        }
+
+        lastWideTextSeenAt = now;
+        isWideTextOpen = true;
+        dialogueEngine.MarkOpen();
+
+        string wideTextKey = snapshot.Dialogue;
+
+        if (string.Equals(
+                wideTextKey,
+                lastWideTextKey,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        lastWideTextKey = wideTextKey;
+
+        ProcessCapturedDialogue(
+            "Narration",
+            snapshot.Dialogue,
+            WideTextAddonName);
+    }
+
     private void ProcessCapturedDialogue(
         string npcName,
         string dialogue,
@@ -497,6 +682,14 @@ public sealed class Plugin : IDalamudPlugin
         {
             return;
         }
+
+        // Ustaw źródło i tryb wyświetlania NATYCHMIAST po przechwyceniu
+        // kwestii, a nie dopiero po zakończeniu tłumaczenia. W przeciwnym
+        // razie przez czas odpowiedzi translatora MainWindow korzystał z
+        // layoutu poprzedniej kwestii. Dla _BattleTalk dawało to dokładnie
+        // efekt krótkiego mignięcia na dole ekranu, po czym napis skakał
+        // nad oryginalną bańkę.
+        SetDisplayContextForSource(source);
 
         dialogueEngine.MarkOpen();
 
@@ -536,6 +729,27 @@ public sealed class Plugin : IDalamudPlugin
             completion);
     }
 
+
+    private void SetDisplayContextForSource(string source)
+    {
+        CurrentDialogueSource = source;
+
+        bool useCinematicDisplay =
+            string.Equals(
+                source,
+                TalkSubtitleAddonName,
+                StringComparison.Ordinal)
+            || string.Equals(
+                source,
+                WideTextAddonName,
+                StringComparison.Ordinal);
+
+        CurrentDialogueDisplayKind =
+            useCinematicDisplay
+                ? DialogueDisplayKind.Cinematic
+                : DialogueDisplayKind.Normal;
+    }
+
     private PlayerSex ResolveAndRememberSpeakerSex(
         string npcName)
     {
@@ -559,6 +773,18 @@ public sealed class Plugin : IDalamudPlugin
             return identity.Sex;
         }
 
+        if (KnownNpcSexOverrides.TryResolve(
+                npcName,
+                out PlayerSex curatedSex))
+        {
+            Log.Information(
+                $"KNOWLEDGE OVERRIDE: {npcName} = {curatedSex}. " +
+                "Użyto kuratorowanego fallbacku, ponieważ aktywny obiekt NPC " +
+                "nie został rozpoznany.");
+
+            return curatedSex;
+        }
+
         Log.Information(
             $"KNOWLEDGE: Brak aktywnej tożsamości NPC " +
             $"dla nazwy {npcName}. Nie użyto pamięci po nazwie.");
@@ -579,7 +805,8 @@ public sealed class Plugin : IDalamudPlugin
 
     private void CloseDialogueIfNoSourceOpen(string source)
     {
-        if (isTalkOpen || isTalkSubtitleOpen)
+        if (isTalkOpen || isTalkSubtitleOpen || isBattleTalkOpen
+            || isWideTextOpen)
         {
             return;
         }
@@ -590,6 +817,7 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         dialogueEngine.MarkClosed();
+        CurrentDialogueSource = string.Empty;
         conversationMemory.Clear();
 
         Log.Information(
@@ -611,13 +839,10 @@ public sealed class Plugin : IDalamudPlugin
                 return;
             }
 
-            CurrentDialogueDisplayKind =
-                string.Equals(
-                    source,
-                    TalkSubtitleAddonName,
-                    StringComparison.Ordinal)
-                    ? DialogueDisplayKind.Cinematic
-                    : DialogueDisplayKind.Normal;
+            // Kontekst layoutu jest ustawiany już przy przechwyceniu tekstu.
+            // Ustawiamy go ponownie po completion wyłącznie jako bezpieczne
+            // potwierdzenie dla tej samej, zakończonej translacji.
+            SetDisplayContextForSource(source);
 
             if (dialogueEngine.CurrentDialogue.IsOpen)
             {

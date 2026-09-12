@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Lorekeeper;
 
@@ -12,6 +13,16 @@ public sealed record ProtectedProperNounText(
 
 public sealed class LocalProperNounStore
 {
+    // Nazwy lore, które są częścią publicznego słownika Lorekeepera.
+    // Są dopasowywane z zachowaniem wielkości liter, aby zwykłe angielskie
+    // rzeczowniki (np. "preservation") nadal mogły być tłumaczone.
+    private static readonly string[] BuiltInProperNouns =
+    [
+        "Solstice",
+        "Winterers",
+        "Preservation",
+        "Thanalan"
+    ];
     private readonly string filePath;
     private readonly ILorekeeperLogger logger;
     private readonly object sync = new();
@@ -43,11 +54,21 @@ public sealed class LocalProperNounStore
 
         lock (sync)
         {
-            return entries
+            IEnumerable<string> localMatches = entries
                 .Where(entry =>
                     text.IndexOf(
                         entry,
-                        StringComparison.OrdinalIgnoreCase) >= 0)
+                        StringComparison.OrdinalIgnoreCase) >= 0);
+
+            IEnumerable<string> builtInMatches = BuiltInProperNouns
+                .Where(entry =>
+                    text.IndexOf(
+                        entry,
+                        StringComparison.Ordinal) >= 0);
+
+            return localMatches
+                .Concat(builtInMatches)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderByDescending(entry => entry.Length)
                 .ThenBy(entry => entry, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -57,6 +78,40 @@ public sealed class LocalProperNounStore
     public bool HasMatch(string text)
     {
         return GetMatches(text).Count > 0;
+    }
+
+    public bool HasBuiltInMatch(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        return BuiltInProperNouns.Any(entry =>
+            text.IndexOf(
+                entry,
+                StringComparison.Ordinal) >= 0);
+    }
+
+    // Tylko wpisy z proper-names.local.json są prywatne.
+    // Wbudowane nazwy lore (Solstice, Winterers, Preservation...)
+    // są publiczną częścią reguł Lorekeepera i mogą być synchronizowane z Cloud.
+    public bool HasPrivateMatch(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        ReloadIfNeeded();
+
+        lock (sync)
+        {
+            return entries.Any(entry =>
+                text.IndexOf(
+                    entry,
+                    StringComparison.OrdinalIgnoreCase) >= 0);
+        }
     }
 
     public string GetCacheFingerprint(string text)
@@ -89,10 +144,19 @@ public sealed class LocalProperNounStore
             string name = matches[i];
             string token = $"__LKPN_{i}__";
 
-            protectedText = ReplaceIgnoreCase(
-                protectedText,
+            bool isBuiltIn = BuiltInProperNouns.Contains(
                 name,
-                token);
+                StringComparer.Ordinal);
+
+            protectedText = isBuiltIn
+                ? protectedText.Replace(
+                    name,
+                    token,
+                    StringComparison.Ordinal)
+                : ReplaceIgnoreCase(
+                    protectedText,
+                    name,
+                    token);
 
             replacements[token] = name;
         }
@@ -110,10 +174,36 @@ public sealed class LocalProperNounStore
 
         foreach ((string token, string value) in replacements)
         {
+            // Najpierw przywróć dokładny token.
             result = result.Replace(
                 token,
                 value,
                 StringComparison.OrdinalIgnoreCase);
+
+            // Modele czasem lekko deformują techniczne placeholdery, np.
+            // __LKPN_0__ -> _LKPN_0__. Przywracamy również takie warianty,
+            // żeby wewnętrzny token nigdy nie wyciekł do overlayu.
+            Match match = Regex.Match(
+                token,
+                @"^_*(LK(?:PN|SPK))_(\d+)_*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            string family = Regex.Escape(match.Groups[1].Value);
+            string index = Regex.Escape(match.Groups[2].Value);
+
+            string tolerantPattern =
+                $@"[\s_]*{family}[\s_-]*{index}[\s_]*";
+
+            result = Regex.Replace(
+                result,
+                tolerantPattern,
+                _ => value,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
 
         return result;

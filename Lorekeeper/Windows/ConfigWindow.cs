@@ -621,6 +621,11 @@ public sealed class ConfigWindow : Window, IDisposable
             SelectTranslationProvider(
                 TranslationProvider.LibreTranslate);
         }
+
+        ImGui.Spacing();
+
+        ImGui.TextDisabled(
+            "Opcje i menu wyboru pozostają w oryginale.");
     }
 
     private void DrawTranslationStorageControls()

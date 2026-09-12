@@ -4,3 +4,6 @@
 *.user
 *.suo
 *.lnk
+# Lorekeeper repo hygiene
+PATCH_NOTES*.md
+cloud/LorekeeperCloudWorker_Dashboard_v*.js

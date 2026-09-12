@@ -19,7 +19,7 @@ public sealed class Translator : ITranslator
     private const decimal Gpt41MiniInputPricePerMillionTokens = 0.40m;
     private const decimal Gpt41MiniCachedInputPricePerMillionTokens = 0.10m;
     private const decimal Gpt41MiniOutputPricePerMillionTokens = 1.60m;
-    private const string CacheKeyVersion = "5";
+    private const string CacheKeyVersion = "12";
 
     private const string SystemPrompt =
         "Jesteś profesjonalnym tłumaczem dialogów z gry Final Fantasy XIV " +
@@ -66,9 +66,73 @@ public sealed class Translator : ITranslator
         "to zmiany literalnego sensu kwestii. " +
         "Nie tłumacz nazw postaci, lokacji, organizacji, przedmiotów, " +
         "jobów, klas, umiejętności, dungeonów, triali i raidów. " +
+        "Traktuj konserwatywnie także kapitalizowane nazwy wydarzeń, frakcji, " +
+        "projektów, zjawisk i pojęć fabularnych. Jeśli termin wygląda na nazwę " +
+        "własną świata FFXIV, pozostaw go w oryginale zamiast tworzyć polski " +
+        "odpowiednik. Dotyczy to m.in. Solstice, Winterers, Preservation i Thanalan. " +
+        "Jeśli w tekście źródłowym pojawiają się techniczne tokeny w formie " +
+        "__LKPN_n__, pozostaw każdy taki token dokładnie bez zmian; zostanie on " +
+        "po tłumaczeniu automatycznie zamieniony z powrotem na nazwę własną. " +
+        "Angielskie słowo 'magick' w terminologii FFXIV oznacza 'magię', " +
+        "nigdy osobę 'magika'. Zachowuj poprawny przypadek i zgodę " +
+        "gramatyczną, np. 'with summoning magick' -> 'magią przywołującą'. " +
+        "Rozpoznawaj idiomy na podstawie całej frazy. Zwroty 'find one's " +
+        "bearings' i 'get one's bearings' oznaczają zorientowanie się lub " +
+        "rozeznanie się w sytuacji/otoczeniu; nie tłumacz w nich 'bearings' " +
+        "jako 'łożyska'. " +
+        "Zwrot 'a sound plan' oznacza 'rozsądny plan' albo 'dobry plan'; " +
+        "nie tłumacz w nim 'sound' jako 'dźwiękowy'. " +
+        "Archaiczne '’twould behoove us' / ''twould behoove us' oznacza, że " +
+        "'powinniśmy' lub 'winniśmy' coś zrobić; nie tłumacz tego jako " +
+        "'bylibyśmy w stanie'. " +
+        "Słowo 'excitement' w kontekście silnych przeżyć, napięcia lub adrenaliny " +
+        "tłumacz jako 'emocje', 'ekscytacja' albo 'adrenalina' zależnie od zdania; " +
+        "nie wybieraj automatycznie słowa 'podniecenie'. Przykład: 'That kind of " +
+        "excitement ain't good for the heart.' -> 'Takie emocje nie służą sercu.'. " +
+        "Idiom 'keep someone company' oznacza 'dotrzymać komuś towarzystwa'; " +
+        "nie tłumacz go jako 'zapewnić komuś towarzystwo'. " +
+        "Zwrot 'care for conversation' oznacza mieć ochotę na rozmowę / interesować " +
+        "się rozmową; nie tłumacz 'care for' jako 'dbać o'. " +
+        "W potocznej mowie 'peddlin' me trade' / 'peddling is my trade' oznacza, " +
+        "że ktoś jest handlarzem albo że handel jest jego fachem. Preferuj naturalne " +
+        "'jestem handlarzem' / 'z zawodu jestem handlarzem'. " +
+        "Konstrukcja 'X's the name' służy do przedstawienia imienia: tłumacz jako " +
+        "'Mam na imię X' albo 'X to imię', nigdy jako 'X to nazwisko'. " +
+        "Idiom 'fit right in' oznacza pasować do miejsca lub grupy / dobrze się tam " +
+        "odnaleźć; nie tłumacz go jako 'zmieścić się'. Przykład: 'you'll fit right in " +
+        "where we're goin'' -> 'będziesz tam pasował' albo naturalny odpowiednik " +
+        "zgodny z płcią adresata. " +
+        "Zwrot 'fresh off the carriage' oznacza, że ktoś dopiero co przyjechał lub " +
+        "wysiadł z powozu; tłumacz naturalnie jako 'dopiero co przyjechałeś' albo " +
+        "'dopiero co wysiadłeś z powozu' zależnie od kontekstu. Nigdy nie używaj " +
+        "kalki 'świeżo z powozu'. " +
+        "Przymiotnik 'cerebral' w zwykłym opisie oznacza 'intelektualny' lub " +
+        "'umysłowy'; nigdy nie twórz formy 'umózgowy/umózgowej'. " +
+        "Zwrot 'it's my business to know everyone' i podobne konstrukcje z 'my " +
+        "business' oznaczają, że leży to w czyimś interesie lub należy do jego fachu. " +
+        "Tłumacz naturalnie np. 'w moim interesie leży znać wszystkich' / 'moim " +
+        "interesem jest znać wszystkich', zależnie od tonu. " +
+        "Idiom 'stub one\'s toe' oznacza uderzyć się w palec u nogi / nabić sobie " +
+        "palec u nogi. Nie pozostawiaj czasownika 'stub' po angielsku i nie twórz " +
+        "konstrukcji typu 'stub swoim palcem'. " +
+        "Termin FFXIV 'beastmen' odnosi się do przedstawicieli plemion bestii; " +
+        "nie skracaj go do samych 'bestii'. W naturalnym zdaniu preferuj 'członkowie " +
+        "plemion bestii' albo równoważną formę odnoszącą się do osób. " +
+        "Termin lore 'realmship' tłumacz jako 'okręt kontynentalny' i odmieniaj " +
+        "naturalnie w liczbie i przypadku, np. 'realmships' -> 'okręty kontynentalne'. " +
+        "Nie tłumacz 'realmship' jako 'nieruchomość' ani nie pozostawiaj go po angielsku. " +
+        "Wyrażenie 'water brand' w kontekście magicznego oznaczenia tłumacz jako " +
+        "'znamię wody'. Angielskiego 'brand' oznaczającego magiczne lub fizyczne " +
+        "oznaczenie nie tłumacz jako 'marka'. " +
+        "Tłumacz także bardzo krótkie kwestie sytuacyjne, komendy i komunikaty ruchu. " +
+        "Nie pozostawiaj pojedynczego angielskiego słowa bez tłumaczenia tylko dlatego, " +
+        "że kwestia jest krótka. Przykład: 'Descending...' w sytuacji schodzenia lub " +
+        "obniżania wysokości -> 'Zniżamy się...'. " +
         "Informacja o płci postaci gracza dotyczy wyłącznie postaci gracza " +
         "jako możliwego adresata wypowiedzi. Nie przenoś jej na NPC mówiącego. " +
-        "Nazwa NPC jest wyłącznie identyfikatorem mówcy. Nie umieszczaj nazwy NPC " +
+        "Nazwa NPC jest wyłącznie identyfikatorem mówcy. Jeśli nazwa bieżącego " +
+        "NPC/mówcy występuje w samej treści kwestii, zachowaj jej pisownię dokładnie " +
+        "1:1 i nigdy jej nie tłumacz ani nie polonizuj. Nie umieszczaj nazwy NPC " +
         "na początku tłumaczenia ani nie zwracaj etykiety mówcy w formie " +
         "'NPC:', ponieważ interfejs Lorekeepera wyświetla nazwę mówcy osobno. " +
         "Przykład: jeśli mówcą jest Monom, odpowiedź ma zaczynać się bezpośrednio " +
@@ -338,6 +402,73 @@ public sealed class Translator : ITranslator
             fromCache: true);
     }
 
+    public TranslationResult StoreCanonicalTranslation(
+        string text,
+        string npcName,
+        TranslationContext context,
+        string translatedText)
+    {
+        context ??= TranslationContext.Default;
+
+        string cacheKey =
+            CreateCacheKey(
+                text,
+                npcName,
+                context);
+
+        string sanitizedTranslation =
+            TranslationTextNormalizer.RemoveSpeakerPrefix(
+                translatedText,
+                npcName);
+
+        TrySaveToCache(
+            cacheKey,
+            sanitizedTranslation);
+
+        conversationMemory?.Add(
+            npcName,
+            text,
+            sanitizedTranslation);
+
+        logger.Information(
+            "OPENAI CACHE: Zapisano kanoniczną korektę Lorekeepera.");
+
+        return CreateResult(
+            text,
+            sanitizedTranslation,
+            fromCache: true);
+    }
+
+    private static ProtectedProperNounText ProtectSpeakerName(
+        ProtectedProperNounText protectedText,
+        string npcName)
+    {
+        string name =
+            (npcName ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(name)
+            || protectedText.Text.IndexOf(
+                name,
+                StringComparison.Ordinal) < 0)
+        {
+            return protectedText;
+        }
+
+        const string token = "__LKSPK_0__";
+
+        Dictionary<string, string> replacements =
+            new(protectedText.Replacements);
+
+        replacements[token] = name;
+
+        return new ProtectedProperNounText(
+            protectedText.Text.Replace(
+                name,
+                token,
+                StringComparison.Ordinal),
+            replacements);
+    }
+
     private async Task<TranslationResult> TranslateWithOpenAiAsync(
         string text,
         string npcName,
@@ -350,9 +481,24 @@ public sealed class Translator : ITranslator
             logger.Information(
                 "OPENAI: Wysyłanie zapytania...");
 
+            ProtectedProperNounText protectedProperNouns =
+                localProperNounStore?.Protect(text)
+                ?? new ProtectedProperNounText(
+                    text,
+                    new Dictionary<string, string>());
+
+            protectedProperNouns =
+                ProtectSpeakerName(
+                    protectedProperNouns,
+                    npcName);
+
             ChatCompletion completion =
                 await chatClient!.CompleteChatAsync(
-                    CreateMessages(text, npcName, context));
+                    CreateMessages(
+                        text,
+                        protectedProperNouns.Text,
+                        npcName,
+                        context));
 
             stopwatch.Stop();
 
@@ -361,7 +507,9 @@ public sealed class Translator : ITranslator
 
             string translatedText =
                 TranslationTextNormalizer.RemoveSpeakerPrefix(
-                    GetTranslatedText(completion),
+                    LocalProperNounStore.Restore(
+                        GetTranslatedText(completion),
+                        protectedProperNouns.Replacements),
                     npcName);
 
             if (string.IsNullOrWhiteSpace(translatedText))
@@ -432,7 +580,8 @@ public sealed class Translator : ITranslator
     }
 
     private List<ChatMessage> CreateMessages(
-        string text,
+        string originalText,
+        string textForTranslation,
         string npcName,
         TranslationContext context)
     {
@@ -455,13 +604,15 @@ public sealed class Translator : ITranslator
         {
             PlayerSex.Female =>
                 "NPC będący mówcą jest kobietą. Wszystkie formy odnoszące " +
-                "się do mówcy stosuj w rodzaju żeńskim. Ta informacja " +
-                "pochodzi z danych gry i ma pierwszeństwo przed domysłami " +
+                "się do mówcy stosuj w rodzaju żeńskim, także formy pierwszoosobowe " +
+                "takie jak 'jestem szczera', 'byłam', 'zrobiłam' lub podobne. " +
+                "Ta informacja pochodzi z danych gry i ma pierwszeństwo przed domysłami " +
                 "wynikającymi z imienia lub treści.",
             PlayerSex.Male =>
                 "NPC będący mówcą jest mężczyzną. Wszystkie formy odnoszące " +
-                "się do mówcy stosuj w rodzaju męskim. Ta informacja " +
-                "pochodzi z danych gry i ma pierwszeństwo przed domysłami " +
+                "się do mówcy stosuj w rodzaju męskim, także formy pierwszoosobowe " +
+                "takie jak 'jestem szczery', 'byłem', 'zrobiłem' lub podobne. " +
+                "Ta informacja pochodzi z danych gry i ma pierwszeństwo przed domysłami " +
                 "wynikającymi z imienia lub treści.",
             _ =>
                 "Płeć NPC będącego mówcą jest nieznana. Nazwa NPC nie określa " +
@@ -470,10 +621,10 @@ public sealed class Translator : ITranslator
         };
 
         string terminologyContext =
-            BuildTerminologyContext(text, context);
+            BuildTerminologyContext(originalText, context);
 
         string localProperNounContext =
-            BuildLocalProperNounContext(text);
+            BuildLocalProperNounContext(originalText);
 
         string conversationContext =
             BuildConversationContext();
@@ -481,7 +632,7 @@ public sealed class Translator : ITranslator
         LoreReferenceInfo loreReference =
             LoreReferenceContext.Resolve(
                 npcName,
-                text);
+                originalText);
 
         string loreContext =
             loreReference.HasContext
@@ -502,7 +653,7 @@ public sealed class Translator : ITranslator
                 "Przetłumacz poniższą kwestię wiernie. Kontekst może pomóc " +
                 "rozwiązać niejednoznaczność, ale nie może zmieniać jawnego " +
                 "znaczenia tekstu źródłowego.\n" +
-                $"Dialog do przetłumaczenia:\n{text}")
+                $"Dialog do przetłumaczenia:\n{textForTranslation}")
         ];
     }
 
@@ -620,7 +771,7 @@ public sealed class Translator : ITranslator
         }
 
         return
-            "Prywatne lokalne nazwy własne dla tej kwestii:\n" +
+            "Chronione nazwy własne dla tej kwestii:\n" +
             string.Join("\n", rules) +
             "\n";
     }

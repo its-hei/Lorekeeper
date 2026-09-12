@@ -36,6 +36,10 @@ public sealed class Configuration : IPluginConfiguration
 
     public bool CoverOriginalNormalDialogue { get; set; } = false;
 
+    // Pole pozostaje wyłącznie dla zgodności ze starszym configiem.
+    // Od 1.3.1.9 opcje/menu wyboru nie są tłumaczone.
+    public bool TranslateDialogueChoices { get; set; } = false;
+
     // Ustawienia wyglądu napisów.
     public float NormalDialogueFontSize { get; set; } = 20.0f;
 
